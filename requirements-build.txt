@@ -1,0 +1,2 @@
+-r requirements-ai.txt
+pyinstaller>=6.22,<7

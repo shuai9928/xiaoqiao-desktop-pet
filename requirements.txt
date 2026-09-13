@@ -1,0 +1,3 @@
+# Desktop runtime; tested with Pillow 12.3.0 and pystray 0.19.5.
+Pillow>=12.0,<13
+pystray>=0.19.5,<0.20
