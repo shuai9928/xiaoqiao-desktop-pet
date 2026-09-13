@@ -1,0 +1,22 @@
+{
+  "decors": [
+    {
+      "name": "decor_cat",
+      "rel": [
+        0.899,
+        0.157
+      ],
+      "layer": "back",
+      "h": 95
+    },
+    {
+      "name": "decor_blob",
+      "rel": [
+        0.091,
+        0.51
+      ],
+      "layer": "back",
+      "h": 114
+    }
+  ]
+}

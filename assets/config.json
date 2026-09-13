@@ -1,0 +1,5 @@
+{
+  "eyes": {"left": [0.413, 0.496], "right": [0.541, 0.487], "size": 0.062},
+  "blink_overlay": true,
+  "char_center_rel": 0.5
+}

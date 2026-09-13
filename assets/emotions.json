@@ -1,0 +1,94 @@
+{
+  "happy": [
+    "okay",
+    "laugh",
+    "hello"
+  ],
+  "praise": [
+    "thanks",
+    "cheer",
+    "amazed"
+  ],
+  "curious": [
+    "curious",
+    "hello"
+  ],
+  "excited": [
+    "coming",
+    "cheer",
+    "laugh"
+  ],
+  "thanks": [
+    "thanks",
+    "okay"
+  ],
+  "tired": [
+    "comfort",
+    "lazy",
+    "sleep"
+  ],
+  "amazed": [
+    "amazed",
+    "shocked"
+  ],
+  "surprised": [
+    "shocked",
+    "amazed"
+  ],
+  "speechless": [
+    "speechless",
+    "pouty"
+  ],
+  "sad": [
+    "cry",
+    "pouty",
+    "broken"
+  ],
+  "angry": [
+    "angry",
+    "broken"
+  ],
+  "lazy": [
+    "lazy",
+    "comfort"
+  ],
+  "mild": [
+    "okay",
+    "roger",
+    "hello",
+    "curious"
+  ],
+  "sleep": [
+    "sleep"
+  ],
+  "greet": [
+    "hello",
+    "coming",
+    "roger"
+  ],
+  "bye": [
+    "comfort",
+    "okay",
+    "hello"
+  ],
+  "shy": [
+    "pouty",
+    "okay",
+    "thanks"
+  ],
+  "dizzy": [
+    "shocked",
+    "broken",
+    "speechless"
+  ],
+  "dance": [
+    "laugh",
+    "cheer",
+    "coming"
+  ],
+  "proud": [
+    "cheer",
+    "amazed",
+    "roger"
+  ]
+}

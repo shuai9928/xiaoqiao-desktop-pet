@@ -1,0 +1,29 @@
+[
+  {
+    "category": "casual",
+    "user": "你好",
+    "assistant": {
+      "say": "你好呀,今天也一起加油~",
+      "emotion": "happy",
+      "action": null
+    }
+  },
+  {
+    "category": "tired",
+    "user": "有点累了",
+    "assistant": {
+      "say": "休息一下吧,我陪着你。",
+      "emotion": "tired",
+      "action": null
+    }
+  },
+  {
+    "category": "playful",
+    "user": "变个魔法",
+    "assistant": {
+      "say": "时间魔法,开始!",
+      "emotion": "excited",
+      "action": "magic"
+    }
+  }
+]
