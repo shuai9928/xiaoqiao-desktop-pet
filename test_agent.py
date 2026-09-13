@@ -8,6 +8,9 @@
 import os
 import sys
 import time
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import agent
 
@@ -67,17 +70,33 @@ def main():
               r == (want_min, want_target))
 
     # ---- 3. 应用索引的 notfound 节流重扫 ----
-    agent._INDEX.build()
-    bt = agent._INDEX.built_at
-    st, _ = agent.resolve_app("绝对不存在的软件xyzzy")
-    check("索引: notfound 时索引未超龄则不重扫",
-          st == "notfound" and agent._INDEX.built_at == bt)
-    agent._INDEX.built_at -= 999          # 人为把索引拨老
-    st, _ = agent.resolve_app("绝对不存在的软件xyzzy")
-    check("索引: 超龄后 notfound 触发一次重扫",
-          agent._INDEX.built_at != bt and st == "notfound")
-    st, _ = agent.resolve_app("微信")
-    check("索引: 常规命中不受节流影响", st == "ok")
+    # 用临时快捷方式测试真实索引逻辑，不依赖电脑是否安装微信。
+    with tempfile.TemporaryDirectory(prefix="xiaoqiao-index-") as folder:
+        shortcut = Path(folder) / "WeChat.lnk"
+        shortcut.touch()  # 只索引名称，不读取或启动快捷方式。
+        index = agent.AppIndex()
+        with (patch.object(agent, "_INDEX", index),
+              patch.object(agent, "_START_MENU", [folder]),
+              patch.object(agent.os, "listdir", return_value=[]),
+              patch.object(agent.time, "time", return_value=1000.0) as clock,
+              patch.object(index, "build", wraps=index.build) as build):
+            index.build()
+            st, _ = agent.resolve_app("绝对不存在的软件xyzzy")
+            rescans = lambda: sum(c.kwargs.get("force", False)
+                                  for c in build.call_args_list)
+            check("索引: notfound 时索引未超龄则不重扫",
+                  st == "notfound" and index.built_at == 1000.0
+                  and rescans() == 0)
+            clock.return_value = 2000.0
+            st, _ = agent.resolve_app("绝对不存在的软件xyzzy")
+            check("索引: 超龄后 notfound 触发一次重扫",
+                  index.built_at == 2000.0 and st == "notfound"
+                  and rescans() == 1)
+            clock.return_value = 3000.0  # 即使索引超龄，命中也不应重扫。
+            st, data = agent.resolve_app("微信")
+            check("索引: 常规命中不受节流影响",
+                  st == "ok" and data == ("WeChat", str(shortcut))
+                  and index.built_at == 2000.0 and rescans() == 1)
 
     # ---- 汇总 ----
     bad = [r for r in RESULTS if r.startswith("FAIL") or r.startswith("ERROR")]
