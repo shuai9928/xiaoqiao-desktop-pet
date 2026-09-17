@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="880" viewBox="0 0 1200 880" role="img" aria-labelledby="title desc">
+<title id="title">想做什么，从这里找到她。</title><desc id="desc">右键打开互动卡片；「更多」展开完整菜单。</desc>
+<rect width="1200" height="880" rx="28" fill="#12101d"/>
+<g font-family="Microsoft YaHei, PingFang SC, sans-serif">
+<text x="44" y="50" font-size="16" font-weight="normal" fill="#e5d2a0">XIAOQIAO / HOW IT WORKS</text>
+<text x="44" y="106" font-size="34" font-weight="bold" fill="#f5f1ff">想做什么，从这里找到她。</text>
+<text x="44" y="146" font-size="18" font-weight="normal" fill="#c6bfd5">右键打开互动卡片；「更多」展开完整菜单。</text>
+<rect x="44" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">01</text>
+<text x="109" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">常用六按钮</text>
+<path d="M66 248h316" stroke="#514361"/>
+<text x="66" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">聊天 / 喂糖 / 时间魔法</text>
+<text x="66" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">跳舞 / 玩球 / 睡觉或叫醒</text>
+<text x="66" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">Tab 切换，Enter 执行</text>
+<text x="66" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">顶部看陪伴天数、好感和星光</text>
+<text x="66" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">提示区看今日小结</text>
+<rect x="420" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">02</text>
+<text x="485" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">更多 → 一起玩</text>
+<path d="M442 248h316" stroke="#514361"/>
+<text x="442" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">撒星星、玩球、石头剪刀布</text>
+<text x="442" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">转圈、跳舞、空翻、变身</text>
+<text x="442" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">打滚、挥手、伸懒腰、发呆</text>
+<text x="442" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">走到命令发出时的鼠标位置</text>
+<text x="442" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">报时、时停、时间回溯</text>
+<rect x="796" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">03</text>
+<text x="861" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">更多 → 小本事</text>
+<path d="M818 248h316" stroke="#514361"/>
+<text x="818" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">提醒 / 找文件 / 查天气</text>
+<text x="818" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">剪贴板总结、翻译 / 看屏幕</text>
+<text x="818" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">番茄钟：25 / 50 分钟</text>
+<text x="818" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">喝水：关 / 30 / 45 / 60 / 90</text>
+<text x="818" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">AI 主动搭话：条件满足时显示</text>
+<rect x="44" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">04</text>
+<text x="109" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">更多 → 设置</text>
+<path d="M66 542h316" stroke="#514361"/>
+<text x="66" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">声音、朗读、开机自启</text>
+<text x="66" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">偷看窗口 / 笔记本电量提醒</text>
+<text x="66" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">大小：80% 至 175% 共五档</text>
+<text x="66" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">置顶 / 鼠标穿透 / AI 密钥</text>
+<text x="66" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">聊天记录 / 纪念日 / 生日</text>
+<rect x="420" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">05</text>
+<text x="485" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">聊天里的动作</text>
+<path d="M442 542h316" stroke="#514361"/>
+<text x="442" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">「冥想」「飘起来」「浮空」</text>
+<text x="442" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">「猜数字」「今日运势」</text>
+<text x="442" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">「摸摸头」「挥挥手」</text>
+<text x="442" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">「5分钟后提醒我喝水」</text>
+<text x="442" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">无需 AI 的指令会本地执行</text>
+<rect x="796" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">06</text>
+<text x="861" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">系统托盘</text>
+<path d="M818 542h316" stroke="#514361"/>
+<text x="818" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">显示 / 隐藏</text>
+<text x="818" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">和小乔聊天 / 时间魔法</text>
+<text x="818" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">随机表情</text>
+<text x="818" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">语音开关 / 退出</text>
+<text x="818" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">左键穿透后仍可右键打开菜单</text>
+<text x="44" y="826" font-size="17" font-weight="normal" fill="#e5d2a0">冥想、猜数字和今日运势可从聊天触发；并非每个玩法都有独立菜单项。</text>
+<text x="44" y="858" font-size="14" font-weight="normal" fill="#aaa0bc">操作路径示意图 · 根据源码整理，非程序窗口截图</text>
+</g></svg>

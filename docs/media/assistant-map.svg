@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="880" viewBox="0 0 1200 880" role="img" aria-labelledby="title desc">
+<title id="title">一句话，到底由谁来完成？</title><desc id="desc">本地动作、本机助手、联网查询与 AI 对话，各有明确的工作范围。</desc>
+<rect width="1200" height="880" rx="28" fill="#12101d"/>
+<g font-family="Microsoft YaHei, PingFang SC, sans-serif">
+<text x="44" y="50" font-size="16" font-weight="normal" fill="#e5d2a0">XIAOQIAO / HOW IT WORKS</text>
+<text x="44" y="106" font-size="34" font-weight="bold" fill="#f5f1ff">一句话，到底由谁来完成？</text>
+<text x="44" y="146" font-size="18" font-weight="normal" fill="#c6bfd5">本地动作、本机助手、联网查询与 AI 对话，各有明确的工作范围。</text>
+<rect x="44" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">01</text>
+<text x="109" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">本地角色动作</text>
+<path d="M66 248h316" stroke="#514361"/>
+<text x="66" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">摸头、喂糖、跳舞、冥想</text>
+<text x="66" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">玩球、猜数字、今日运势</text>
+<text x="66" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">先匹配程序支持的指令</text>
+<text x="66" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">不需要密钥，不调用模型</text>
+<text x="66" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">忙碌时某些动作暂不可用</text>
+<rect x="420" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">02</text>
+<text x="485" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">本机实用助手</text>
+<path d="M442 248h316" stroke="#514361"/>
+<text x="442" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">定时提醒、番茄钟</text>
+<text x="442" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">按名称查找文件</text>
+<text x="442" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">解析打开或关闭应用的指令</text>
+<text x="442" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">操作发生在你自己的电脑上</text>
+<text x="442" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">不等于理解任何自然语言</text>
+<rect x="796" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">03</text>
+<text x="861" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">天气与联网</text>
+<path d="M818 248h316" stroke="#514361"/>
+<text x="818" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">从菜单询问当前天气</text>
+<text x="818" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">按提示提供城市</text>
+<text x="818" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">需要访问天气服务</text>
+<text x="818" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">独立于 AI 对话密钥</text>
+<text x="818" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">网络失败时按提示重试</text>
+<rect x="44" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">04</text>
+<text x="109" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">可选 AI 对话</text>
+<path d="M66 542h316" stroke="#514361"/>
+<text x="66" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">安装 requirements-ai.txt</text>
+<text x="66" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">设置 → 设置 AI 密钥</text>
+<text x="66" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">使用自己的 Gemini 配置</text>
+<text x="66" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">对话可能带相关长期记忆</text>
+<text x="66" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">费用和服务可用性取决于提供方</text>
+<rect x="420" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">05</text>
+<text x="485" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">剪贴板与屏幕</text>
+<path d="M442 542h316" stroke="#514361"/>
+<text x="442" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">从对应菜单或指令发起</text>
+<text x="442" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">总结 / 翻译剪贴板内容</text>
+<text x="442" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">请求 AI 解释当前屏幕</text>
+<text x="442" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">相关内容可能发送到模型服务</text>
+<text x="442" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">使用前确认内容适合发送</text>
+<rect x="796" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">06</text>
+<text x="861" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">数据留在哪里</text>
+<path d="M818 542h316" stroke="#514361"/>
+<text x="818" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">设置、提醒、聊天保存在本机</text>
+<text x="818" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">记忆与 AI 配置位于 assets</text>
+<text x="818" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">真实数据不进入公开仓库</text>
+<text x="818" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">debug-state 可能记录聊天文字</text>
+<text x="818" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">公开版只带示例 AI 配置</text>
+<text x="44" y="826" font-size="17" font-weight="normal" fill="#e5d2a0">示意图不构成云端隐私承诺；实际发送内容及服务规则以所用 AI 配置为准。</text>
+<text x="44" y="858" font-size="14" font-weight="normal" fill="#aaa0bc">操作路径示意图 · 根据源码整理，非程序窗口截图</text>
+</g></svg>

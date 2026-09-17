@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="880" viewBox="0 0 1200 880" role="img" aria-labelledby="title desc">
+<title id="title">陪你专注，也记得让你休息。</title><desc id="desc">更多 → 小本事 → 番茄钟；今日专注分钟在完成专注段时结算。</desc>
+<rect width="1200" height="880" rx="28" fill="#12101d"/>
+<g font-family="Microsoft YaHei, PingFang SC, sans-serif">
+<text x="44" y="50" font-size="16" font-weight="normal" fill="#e5d2a0">XIAOQIAO / HOW IT WORKS</text>
+<text x="44" y="106" font-size="34" font-weight="bold" fill="#f5f1ff">陪你专注，也记得让你休息。</text>
+<text x="44" y="146" font-size="18" font-weight="normal" fill="#c6bfd5">更多 → 小本事 → 番茄钟；今日专注分钟在完成专注段时结算。</text>
+<rect x="44" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">01</text>
+<text x="109" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">选一段时间</text>
+<path d="M66 248h316" stroke="#514361"/>
+<text x="66" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">选择 25 或 50 分钟</text>
+<text x="66" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">也可在聊天说「来个番茄钟」</text>
+<text x="66" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">开始后进入专注陪伴</text>
+<text x="66" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">计时状态保存在本机</text>
+<text x="66" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">停止番茄钟可提前结束</text>
+<rect x="420" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">02</text>
+<text x="485" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">安静陪着你</text>
+<path d="M442 248h316" stroke="#514361"/>
+<text x="442" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">暂停闲聊、走动和主动搭话</text>
+<text x="442" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">保留呼吸、眨眼、视线跟随</text>
+<text x="442" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">每 4–7 分钟少量无声星光</text>
+<text x="442" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">专注过半时轻轻蹭一下</text>
+<text x="442" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">主动摸她仍然会回应</text>
+<rect x="796" y="190" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="230" font-size="18" font-weight="normal" fill="#e5d2a0">03</text>
+<text x="861" y="230" font-size="23" font-weight="bold" fill="#f5f1ff">完成这一段</text>
+<path d="M818 248h316" stroke="#514361"/>
+<text x="818" y="281" font-size="19" font-weight="normal" fill="#c6bfd5">到点提醒并累计完成次数</text>
+<text x="818" y="311" font-size="19" font-weight="normal" fill="#c6bfd5">今日专注分钟加上本段时长</text>
+<text x="818" y="341" font-size="19" font-weight="normal" fill="#c6bfd5">增加好感，可能解锁里程碑</text>
+<text x="818" y="371" font-size="19" font-weight="normal" fill="#c6bfd5">空闲时接上一次伸懒腰</text>
+<text x="818" y="401" font-size="19" font-weight="normal" fill="#c6bfd5">进入 5 分钟休息</text>
+<rect x="44" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="66" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">04</text>
+<text x="109" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">休息一下</text>
+<path d="M66 542h316" stroke="#514361"/>
+<text x="66" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">恢复平常的互动与日常动作</text>
+<text x="66" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">喝水，站起来走一走</text>
+<text x="66" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">5 分钟到点再次提示</text>
+<text x="66" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">本轮结束后由你决定下一轮</text>
+<text x="66" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">不会自动无限循环专注</text>
+<rect x="420" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="442" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">05</text>
+<text x="485" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">今日小结</text>
+<path d="M442 542h316" stroke="#514361"/>
+<text x="442" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">摸头 / 喂糖 / 接星</text>
+<text x="442" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">完成的专注分钟 / 聊天 / 挠痒</text>
+<text x="442" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">卡片依次显示前三个非零项</text>
+<text x="442" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">晚上 21 点后空闲时小结一次</text>
+<text x="442" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">按本机日期跨天重新计数</text>
+<rect x="796" y="484" width="360" height="270" rx="18" fill="#211b32" stroke="#514361"/>
+<text x="818" y="524" font-size="18" font-weight="normal" fill="#e5d2a0">06</text>
+<text x="861" y="524" font-size="23" font-weight="bold" fill="#f5f1ff">提醒各自独立</text>
+<path d="M818 542h316" stroke="#514361"/>
+<text x="818" y="575" font-size="19" font-weight="normal" fill="#c6bfd5">喝水提醒是另一条周期计时</text>
+<text x="818" y="605" font-size="19" font-weight="normal" fill="#c6bfd5">一次性提醒到点照常通知</text>
+<text x="818" y="635" font-size="19" font-weight="normal" fill="#c6bfd5">电量事件在专注与睡眠时静默</text>
+<text x="818" y="665" font-size="19" font-weight="normal" fill="#c6bfd5">静默期间的电量事件不补播</text>
+<text x="818" y="695" font-size="19" font-weight="normal" fill="#c6bfd5">提醒不需要 AI 密钥</text>
+<text x="44" y="826" font-size="17" font-weight="normal" fill="#e5d2a0">图示为功能流程；系统关机或进程未运行时，不会凭空弹出通知。</text>
+<text x="44" y="858" font-size="14" font-weight="normal" fill="#aaa0bc">操作路径示意图 · 根据源码整理，非程序窗口截图</text>
+</g></svg>
