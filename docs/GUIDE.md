@@ -2,6 +2,8 @@
 
 [← 返回产品展示](../README.md)
 
+[文档导航](README.md) · [互动图解手册](INTERACTIONS.md) · [聊天与桌面助手](ASSISTANT.md) · [开发指南](DEVELOPMENT.md)
+
 
 
 ## 从源码运行
@@ -18,6 +20,14 @@ if (!(Test-Path assets\ai_config.json)) { Copy-Item assets\ai_config.example.jso
 ```
 
 不配置密钥也能使用桌宠动作、语音、提醒和小游戏。程序运行后右键小乔打开互动卡片；“更多”可进入完整菜单，包括设置和退出。
+
+第一次运行可按这条路线体验：**右键 → 喂糖 → 聊天输入“冥想” → 更多 → 小本事 → 番茄钟**。想理解今日小结、电量提醒与新特效，参照[图解手册](INTERACTIONS.md)。
+
+### 更新已有源码版
+
+使用 Git 克隆且没有本地修改时，在仓库目录执行 `git pull --ff-only`，然后退出旧桌宠并重新运行。下载 ZIP 的用户应解压到新目录，先验证新版本能正常启动；运行数据的路径见[数据说明](ASSISTANT.md#数据保存在什么位置)。不要用空白示例覆盖已有 AI 配置，也不要把个人存档打进公开压缩包。
+
+若自己修改过源码，先保存这些修改并检查差异，再合并更新；不要为更新直接删除原来的整个运行目录。
 
 ### 启用 AI（可选）
 
@@ -73,6 +83,8 @@ AI 开启后，对话及相关记忆会发送给配置的模型服务；请求�
 | `build_release.py` | Windows 打包与发布副本净化 |
 
 开发决策见 [EXPERIMENTS.md](../EXPERIMENTS.md)，参与贡献见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+
+模块地图、分组测试和演示复现命令已集中在[开发指南](DEVELOPMENT.md)。`EXPERIMENTS.md` 是此前公开的历史记录；本轮变化以[更新记录](../CHANGELOG.md)为准。
 
 ## 打包 Windows 程序
 
