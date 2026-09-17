@@ -128,6 +128,144 @@ def _sigil_sprite(size, seed):
     ])
 
 
+def _merge_mask_layers(layers):
+    """把若干张"居中叠放、依次带蒙版 paste"的静态贴图预合成为 (颜色图, 蒙版)。
+
+    frame.paste(S, box, S) 是蒙版插值:D <- S*m + D*(1-m),m = S.alpha/255。
+    依次贴 n 层等价于 D <- P + D*T,其中 P 是各层贡献的累积、T = prod(1-m)。
+    令覆盖率 M = 1-T、颜色 C = P/M,则一次 paste(C, box, M) 得到同样结果
+    (只差 8 位舍入)。各层按 _paste_c 的 int(c - w/2) 取整规则对齐,
+    中心为整数时位置逐像素一致。
+
+    只用 PIL,不能为这一次预渲染引入 numpy:numpy 背后的 OpenBLAS 按核数
+    预留线程缓冲,16 核机器上一 import 就多出约 490MB 提交内存,而 pet
+    本来完全不加载 numpy。
+    """
+    from PIL import ImageMath
+    wm = max(im.width for im in layers)
+    hm = max(im.height for im in layers)
+    acc = Image.new("RGBA", (wm, hm), (0, 0, 0, 0))
+    cover = Image.new("L", (wm, hm), 0)
+    for im in layers:
+        im = im.convert("RGBA")
+        ox = -(-wm // 2) - (-(-im.width // 2))
+        oy = -(-hm // 2) - (-(-im.height // 2))
+        acc.paste(im, (ox, oy), im)            # 从全透明起步,同样的蒙版插值累积出 P
+        cover.paste(255, (ox, oy, ox + im.width, oy + im.height), im.getchannel("A"))
+    m = cover.convert("F")
+    chans = [ImageMath.lambda_eval(
+                 lambda a: a["p"] * 255.0 / (a["m"] + (a["m"] == 0)) + 0.5,
+                 p=ch.convert("F"), m=m).convert("L")
+             for ch in acc.split()]            # M=0 处 P 也为 0,分母补 1 防除零
+    return Image.merge("RGBA", chans), cover
+
+
+def _soft_half(im, blur):
+    """半分辨率上做模糊再放大回来。只给大半径的柔光层用(低频内容,放大
+    看不出差别),预渲染成本约降到四分之一。"""
+    w, h = im.size
+    small = im.resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR)
+    return small.filter(ImageFilter.GaussianBlur(blur / 2)).resize((w, h), Image.BILINEAR)
+
+
+def _hit_sprite(u, sk, rgb):
+    """命中光环的第 u 档(0..1)。sk = scale*ss。
+
+    前 40% 有亮芯 + 四角星芒("啪"的那一下),环本身按 ease-out 扩散:
+    一开始冲得快、末段慢慢化开,和粒子飘走的节奏对得上。
+    """
+    e = 1 - (1 - u) ** 2
+    r = (8 + 34 * e) * sk
+    # 每档画布只开到这一档用得着的大小:前几档环还很小,原来一律按最大环
+    # 开 260px 画布,20 张精灵的预渲染占了法阵全部新增建图时间的七成
+    reach = max(r + 9 * sk, 26 * sk if u < 0.45 else 0)
+    size = int(2 * reach + 2)
+    c = size / 2
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # 淡得慢一点:点完 0.2 秒(过半)环还要看得见,不能只剩一圈暗影
+    fade = (1 - u) ** 0.75
+    lw = max(1, int((2.6 - 1.6 * u) * sk))
+    # 泛光圈:同一个环画粗、糊开,再压一道细亮环 —— 第一版只有细环,
+    # 在深色底上像瞄准镜的准星
+    halo = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(halo).ellipse([c - r, c - r, c + r, c + r],
+                                 outline=rgb + (int(215 * fade),), width=lw * 3)
+    im.alpha_composite(_soft_half(halo, 2.2 * sk))
+    ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).ellipse([c - r, c - r, c + r, c + r],
+                                 outline=(255, 250, 240, int(235 * fade)), width=lw)
+    im.alpha_composite(_soft(ring, 0.5 * sk))
+    if u < 0.45:
+        f = 1 - u / 0.45
+        core = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        cr = (4 + 6 * f) * sk
+        ImageDraw.Draw(core).ellipse([c - cr, c - cr, c + cr, c + cr],
+                                     fill=rgb + (int(230 * f),))
+        im.alpha_composite(_soft_half(core, 3.0 * sk))
+        # 四角星芒:中间粗、两头收尖的菱形,而不是等粗的十字线
+        glint = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glint)
+        ln = (9 + 14 * (1 - f)) * f * sk + 3 * sk
+        wd = 2.2 * f * sk + 0.6 * sk
+        for ax, ay in ((1, 0), (0, 1)):
+            px, py = -ay, ax
+            gd.polygon([(c + ax * ln, c + ay * ln), (c + px * wd, c + py * wd),
+                        (c - ax * ln, c - ay * ln), (c - px * wd, c - py * wd)],
+                       fill=(255, 255, 255, int(245 * f)))
+        im.alpha_composite(_soft(glint, 0.7 * sk))
+    return im
+
+
+def _glyph_sprite(ch, font, stroke, rgb=GOLD_L, ink=(62, 34, 96)):
+    """飘字的一个字形:金字 + 深紫描边 + 一层柔光。描边保证落在白裙子、
+    浅色桌面上也读得清。"""
+    x0, y0, x1, y1 = font.getbbox(ch, stroke_width=stroke)
+    pad = stroke * 3
+    w, h = x1 - x0 + pad * 2, y1 - y0 + pad * 2
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).text((pad - x0, pad - y0), ch, font=font, fill=rgb + (150,),
+                              stroke_width=stroke * 2, stroke_fill=rgb + (150,))
+    im = _soft(glow, stroke * 1.2)
+    ImageDraw.Draw(im).text((pad - x0, pad - y0), ch, font=font, fill=rgb + (255,),
+                            stroke_width=stroke, stroke_fill=ink + (235,))
+    return im
+
+
+def _star_icon_sprite(h, stroke, rgb=GOLD_L, ink=(62, 34, 96)):
+    """飘字末尾的四角星(不用 ✦ 字符:雅黑里没有这个字形)。"""
+    size = int(h + stroke * 6)
+    c = size / 2
+    ro, ri = h * 0.46, h * 0.14
+    pts = []
+    for i in range(8):
+        r = ro if i % 2 == 0 else ri
+        a = -math.pi / 2 + math.pi * i / 4
+        pts.append((c + math.cos(a) * r, c + math.sin(a) * r))
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).polygon(pts, fill=rgb + (170,))
+    im = _soft(glow, stroke * 1.6)
+    d = ImageDraw.Draw(im)
+    d.polygon(pts, fill=rgb + (255,), outline=ink + (235,), width=max(1, stroke))
+    return im
+
+
+def _orb_sprite(r, rgb):
+    """一颗带柔光的星核:外圈大光晕 + 亮白芯。"""
+    size = int(r * 4)
+    c = size / 2
+    halo = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(halo).ellipse([c - r, c - r, c + r, c + r], fill=rgb + (175,))
+    im = _soft(halo, r * 0.55)
+    core = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # 芯小一点、偏暖:第一版是 0.32r 的纯白芯,近侧星核从她脸前扫过时
+    # 像一块白斑
+    cr = r * 0.2
+    ImageDraw.Draw(core).ellipse([c - cr, c - cr, c + cr, c + cr],
+                                 fill=(255, 246, 214, 230))
+    im.alpha_composite(_soft(core, max(0.5, r * 0.08)))
+    return im
+
+
 def _alpha_scaled(im, a):
     """按比例调整整张图的 alpha。只在预渲染阶段用,不进每帧路径。"""
     out = im.copy()
@@ -170,6 +308,10 @@ class FX:
         self.core = _disc_sprite(rx * 0.78, MAGIC_B, 105, ratio=0.26)
         # 环上跑的小金点
         self.bead = _dot_sprite(3.0 * s * k, GOLD_L, 255)
+        # 光垫 + 四道环都不转,原来每帧分 5 次带蒙版贴(待机每帧约 2ms)。
+        # 预合成一次,运行时只贴一次;叠放顺序与原来一致(光垫在最底)。
+        self.ground_static = _merge_mask_layers(
+            [self.core, self.ring_out, self.ring_out2, self.ring_mid, self.ring_in])
         # 冲击波:三档强度 × 16 帧扩散与渐隐,运行时只挑贴图。
         self._shock_sets = [
             [_ring_sprite(rx * (.25 + i / 15) * strength,
@@ -177,18 +319,62 @@ class FX:
                           MAGIC_B, int(210 * (1 - i / 15) ** .8), ratio=.26)
              for i in range(16)] for strength in (.5, .75, 1.0)]
         self.shock = self._shock_sets[-1]
+        self._build_living()
+
+    # 下面几组都是"让她动起来"的贴图:原先待机时法阵除了符文匀速转,亮度
+    # 是死的;摸头/接星只有飘走的粒子,点中的那一下没有落点;冥想的环绕
+    # 星尘是平的,永远画在她身前。全部在这里一次性画好,每帧只挑一张贴。
+    BREATH_STEPS = 8     # 法阵呼吸光的亮度档
+    RIPPLE_STEPS = 14    # 法阵光纹从内圈荡到外圈的半径档
+    HIT_STEPS = 10       # 命中光环的扩散档
+    ORB_STEPS = 4        # 冥想星核的淡入淡出档
+
+    def _build_living(self):
+        s, k, rx = self.scale, self.ss, self.rx
+        # 呼吸光:压扁的柔光饼,亮度跟着她的上下浮动。第 0 档是全暗,运行时
+        # 直接跳过不贴,所以呼吸到谷底那几帧零成本。
+        # 贴在法阵静态层之上、符文之下:第一版垫在静态层底下,被光垫那张
+        # 105 透明度的圆饼盖掉六成,截图里改前改后几乎分不出来。
+        glow = _disc_sprite(rx * 0.60, (210, 232, 255), 225, ratio=0.26)
+        self.breath = [None] + [_alpha_scaled(glow, i / (self.BREATH_STEPS - 1))
+                                for i in range(1, self.BREATH_STEPS)]
+        # 光纹:从金色内圈出发荡到外圈,越走越淡越细。不带 bloom —— 泛光层
+        # 会把贴图撑大两圈,每帧贴的像素多出一倍,而淡光纹上看不出差别。
+        n = self.RIPPLE_STEPS
+        # 第一版是 1~2px 的淡蓝细线、不带泛光,和法阵自己的几道环同色同粗,
+        # 截图里完全认不出来。改成金色、带泛光,前半程保持亮度。
+        self.ripple = [_ring_sprite(rx * (0.30 + 0.76 * i / (n - 1)),
+                                    max(1.0, (2.6 - 1.4 * i / (n - 1)) * k),
+                                    GOLD_L if i < n * 2 // 3 else (230, 225, 255),
+                                    int(225 * (1 - i / (n - 1)) ** 0.8) + 10,
+                                    ratio=0.26)
+                       for i in range(n)]
+        # 命中光环:点中处先炸一下亮芯和四角星芒,随后一圈环向外扩散变淡。
+        # 立着的正圆(命中点在半空),两套配色:金=接星/喂糖/挠痒,粉=摸头。
+        # 粉色要偏亮:深粉在低透明度的尾段压在深色底上会发灰发棕。
+        self.hit = {name: [_hit_sprite(i / (self.HIT_STEPS - 1), s * k, rgb)
+                           for i in range(self.HIT_STEPS)]
+                    for name, rgb in (("gold", GOLD_L), ("pink", (255, 188, 222)))}
+        # 冥想星核:近侧大而亮(画在她身前),远侧小而暗(画在她身后),
+        # 环绕才有纵深。
+        orb_near = _orb_sprite(22 * s * k, GOLD_L)
+        orb_far = _orb_sprite(14 * s * k, MAGIC_A)
+        self.orbs = {"near": [_alpha_scaled(orb_near, (i + 1) / self.ORB_STEPS)
+                              for i in range(self.ORB_STEPS)],
+                     "far": [_alpha_scaled(orb_far, 0.55 * (i + 1) / self.ORB_STEPS)
+                             for i in range(self.ORB_STEPS)]}
 
     # ---------- 每帧 ----------
-    def ground_circle(self, frame, d, cx, cy, t, energy=0.0):
-        """地面法阵。每帧代价 = 5 张环/光贴图 + 12 张符文 + 8 个金点 + 两条星形折线,
-        全是贴图和直线,没有任何实时滤镜或旋转。"""
+    def ground_circle(self, frame, d, cx, cy, t, energy=0.0, breath=None):
+        """地面法阵。每帧代价 = 1 张预合成的环/光贴图 + 16 张符文 + 8 个金点 + 星形折线,
+        全是贴图和直线,没有任何实时滤镜或旋转。breath(0..1)给了就在静态层
+        和符文之间多贴一张呼吸光。"""
         k = self.ss
         rx = self.rx
-        self._paste_c(frame, self.core, cx, cy)
-        self._paste_c(frame, self.ring_out, cx, cy)
-        self._paste_c(frame, self.ring_out2, cx, cy)
-        self._paste_c(frame, self.ring_mid, cx, cy)
-        self._paste_c(frame, self.ring_in, cx, cy)
+        img, mask = self.ground_static
+        frame.paste(img, (int(cx - img.width / 2), int(cy - img.height / 2)), mask)
+        if breath is not None:
+            self.ground_breath(frame, cx, cy, breath)
 
         # 能量控制角速度。不能直接乘累计时间,否则每次踩点都会跳角度。
         dt = 0.0 if self._circle_time is None else max(0.0, min(.25, t - self._circle_time))
@@ -230,6 +416,61 @@ class FX:
             for w, al in ((5.0, 26 + e // 3), (2.4, 70 + e // 2), (1.1, 190 + e)):
                 d.line(pts, fill=tint + (min(255, al),),
                        width=max(1, int(w * k * 0.6)), joint="curve")
+
+    GAIN_ALPHA = 4       # 飘字淡入淡出档
+    GAIN_CHARS = "+0123456789"
+
+    def build_gain_glyphs(self, font):
+        """星光飘字的字形表。字体由调用方给(和气泡同一套雅黑),fx 自己不
+        依赖系统字体;没建过时 gain_text 什么都不画。"""
+        stroke = max(2, int(1.3 * self.scale * self.ss))
+        base = {ch: _glyph_sprite(ch, font, stroke) for ch in self.GAIN_CHARS}
+        base["*"] = _star_icon_sprite(base["0"].height - stroke * 4, stroke)
+        table = {ch: [_alpha_scaled(g, (i + 1) / self.GAIN_ALPHA)
+                      for i in range(self.GAIN_ALPHA)]
+                 for ch, g in base.items()}
+        # 在后台线程里建:先放字距、最后一步才挂上字形表,主线程读到表时
+        # 字距一定已经在了
+        self._gain_kern = stroke * 6         # 描边和柔光的留白,排字时吃回去
+        self.gain = table
+
+    def gain_text(self, frame, cx, cy, text, vis):
+        """以 (cx, cy) 为中心排一串预渲染字形;vis 0..1 选透明度档。"""
+        table = getattr(self, "gain", None)
+        i = int(max(0.0, min(1.0, vis)) * self.GAIN_ALPHA) - 1
+        if not table or i < 0:
+            return
+        sprites = [table[ch][min(i, self.GAIN_ALPHA - 1)] for ch in text if ch in table]
+        if not sprites:
+            return
+        kern = self._gain_kern
+        width = sum(sp.width for sp in sprites) - kern * (len(sprites) - 1)
+        x = cx - width / 2
+        for sp in sprites:
+            frame.paste(sp, (int(x), int(cy - sp.height / 2)), sp)
+            x += sp.width - kern
+
+    def ground_breath(self, frame, cx, cy, level):
+        """法阵呼吸光。level 0..1;落在最暗一档时什么都不贴。"""
+        i = int(max(0.0, min(1.0, level)) * (self.BREATH_STEPS - 1) + 0.5)
+        if i:
+            self._paste_c(frame, self.breath[i], cx, cy)
+
+    def ground_ripple(self, frame, cx, cy, p):
+        """一道光纹荡出去。p 是 0..1 的进度,区间外不画。"""
+        if 0 <= p < 1:
+            self._paste_c(frame, self.ripple[int(p * self.RIPPLE_STEPS)], cx, cy)
+
+    def hit_ring(self, frame, cx, cy, p, palette="gold"):
+        if 0 <= p < 1:
+            sprites = self.hit.get(palette) or self.hit["gold"]
+            self._paste_c(frame, sprites[int(p * self.HIT_STEPS)], cx, cy)
+
+    def orb(self, frame, cx, cy, side, vis):
+        """冥想星核。vis 0..1 是淡入淡出系数,太暗就不贴。"""
+        i = int(max(0.0, min(1.0, vis)) * self.ORB_STEPS) - 1
+        if i >= 0:
+            self._paste_c(frame, self.orbs[side][min(i, self.ORB_STEPS - 1)], cx, cy)
 
     def shockwave(self, frame, cx, cy, p, strength=1.0):
         """扩散同时淡出;强弱只影响半径,不再把消失时间截在半途。"""

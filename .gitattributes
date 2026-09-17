@@ -1,0 +1,2 @@
+# Accept the existing CRLF/LF mix without rewriting unrelated source lines.
+* whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

@@ -276,5 +276,182 @@ class EverydayMotionTests(unittest.TestCase):
         p.start_stretch.assert_not_called()
 
 
+class LivelinessTests(unittest.TestCase):
+    """动态感一组(E20~E23):法阵呼吸光/光纹、命中光环、蹦跳、冥想星核。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.layer = fx.FX(1, 2)
+
+    def blank(self):
+        im = Image.new('RGBA', (900, 400), (26, 24, 40, 255))
+        return im, ImageDraw.Draw(im)
+
+    def test_frame_path_never_filters_or_rotates(self):
+        # 铁律:新特效每帧只准贴图。把滤镜/旋转/缩放全换成炸弹再调一遍。
+        layer = self.layer
+        boom = AssertionError('帧循环里不许做滤镜/旋转/缩放')
+        with patch.object(Image.Image, 'filter', side_effect=boom), \
+                patch.object(Image.Image, 'rotate', side_effect=boom), \
+                patch.object(Image.Image, 'resize', side_effect=boom), \
+                patch.object(fx.ImageFilter, 'GaussianBlur', side_effect=boom):
+            im, d = self.blank()
+            for i in range(20):
+                u = i / 19
+                layer.ground_circle(im, d, 450, 300, 10 + i * .05, 0, breath=u)
+                layer.ground_ripple(im, 450, 300, u)
+                layer.hit_ring(im, 300, 120, u, 'pink')
+                layer.hit_ring(im, 600, 120, u, 'gold')
+                layer.orb(im, 450, 150, 'near', u)
+                layer.orb(im, 450, 150, 'far', u)
+
+    def test_sprites_are_prebuilt_with_expected_steps(self):
+        layer = self.layer
+        self.assertEqual(len(layer.breath), layer.BREATH_STEPS)
+        self.assertIsNone(layer.breath[0])          # 最暗一档不贴
+        self.assertEqual(len(layer.ripple), layer.RIPPLE_STEPS)
+        for name in ('gold', 'pink'):
+            self.assertEqual(len(layer.hit[name]), layer.HIT_STEPS)
+        for side in ('near', 'far'):
+            self.assertEqual(len(layer.orbs[side]), layer.ORB_STEPS)
+
+    def test_breath_and_ripple_draw_only_when_active(self):
+        layer = self.layer
+
+        def circle(**kw):
+            im, d = self.blank()
+            layer._circle_time = None
+            layer._orbit_spin = layer._bead_spin = 0.
+            layer.ground_circle(im, d, 450, 300, 1., 0, **kw)
+            return im
+
+        plain = circle().tobytes()
+        self.assertEqual(circle(breath=0).tobytes(), plain)
+        self.assertNotEqual(circle(breath=1).tobytes(), plain)
+        for p in (-.1, 1., 1.7):
+            im, _ = self.blank()
+            before = im.tobytes()
+            layer.ground_ripple(im, 450, 300, p)
+            self.assertEqual(im.tobytes(), before, p)
+        im, _ = self.blank()
+        before = im.tobytes()
+        layer.ground_ripple(im, 450, 300, .5)
+        self.assertNotEqual(im.tobytes(), before)
+
+    def test_hit_ring_range_and_palette_fallback(self):
+        layer = self.layer
+        for p in (-.01, 1., 2.):
+            im, _ = self.blank()
+            before = im.tobytes()
+            layer.hit_ring(im, 450, 200, p)
+            self.assertEqual(im.tobytes(), before)
+        a, _ = self.blank()
+        b, _ = self.blank()
+        layer.hit_ring(a, 450, 200, .2, 'no-such-palette')
+        layer.hit_ring(b, 450, 200, .2, 'gold')
+        self.assertEqual(a.tobytes(), b.tobytes())
+
+    def test_hit_ring_is_a_show_particle_not_ambient(self):
+        # 它是互动瞬间的演出,允许短暂顶到 60fps;但绝不能混进氛围集合,
+        # 否则 0.38 秒后没人管它、安静档判定也不会把它当"在动"
+        self.assertNotIn('hit_ring', pet.AMBIENT_PARTS)
+        self.assertLess(pet.HIT_RING_LIFE, .5)
+
+    def test_hop_starts_and_ends_on_ground_with_whole_bounces(self):
+        for amp in (.4, .5, .7, .8, .95):
+            p = pet.Pet.__new__(pet.Pet)
+            p.hop(amp)
+            total = p._hop_total
+            self.assertEqual(p.hop_t, total)
+            self.assertEqual(p.squash, .9)
+            n = round((total - pet.HOP_CROUCH) / pet.HOP_PERIOD)
+            self.assertAlmostEqual(total, pet.HOP_CROUCH + n * pet.HOP_PERIOD)
+            curve = pet.Pet._hop_curve
+            self.assertEqual(curve(0, total, amp), 0)                 # 不再凭空瞬移
+            self.assertEqual(curve(pet.HOP_CROUCH * .9, total, amp), 0)
+            self.assertEqual(curve(total, total, amp), 0)             # 不再半空掉落
+            peaks = [curve(pet.HOP_CROUCH + (j + .5) * pet.HOP_PERIOD, total, amp)
+                     for j in range(n)]
+            self.assertAlmostEqual(peaks[0], 5 + 10 * amp)          # 峰值手感不变
+            self.assertTrue(all(a > b for a, b in zip(peaks, peaks[1:])))
+            for j in range(1, n):                                    # 每跳真的触地
+                self.assertAlmostEqual(
+                    curve(pet.HOP_CROUCH + j * pet.HOP_PERIOD + 1e-9, total, amp), 0,
+                    places=5)
+
+    def test_hop_touchdown_count_is_frame_rate_independent(self):
+        total = pet.HOP_CROUCH + 4 * pet.HOP_PERIOD
+        for fps in (10, 20, 30, 60):
+            hits, age = 0, 0.
+            while age < total + .2:
+                nxt = age + 1 / fps
+                hits += pet.Pet._hop_touchdown(age, nxt, total)
+                age = nxt
+            self.assertEqual(hits, 4, fps)
+
+    def test_meditate_arms_depth_and_orb_fade(self):
+        for i in range(50):
+            t2 = .8 + i * .08
+            arms = pet.Pet._meditate_arms(t2, 500, 600, 30)
+            self.assertEqual(len(arms), 3)
+            sides = [a[2] for a in arms]
+            self.assertIn(sides.count('near'), (1, 2))
+            for x, y, side, a in arms:
+                self.assertEqual(side == 'near', pet.math.sin(a) > 0)
+        vis = pet.Pet._meditate_orb_vis
+        self.assertEqual(vis(.5), 0)
+        self.assertEqual(vis(5.2), 0)
+        self.assertEqual(vis(2.5), 1)
+        self.assertTrue(0 < vis(1.0) < 1 and 0 < vis(4.7) < 1)
+
+
+class LivelinessRound2Tests(unittest.TestCase):
+    """动态感第二批(E25~E28):星光飘字、光标感应、抛飞拖尾、抓取光环。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.layer = fx.FX(1, 2)
+        cls.layer.build_gain_glyphs(pet.load_font(34))
+
+    def test_gain_glyphs_prebuilt_and_frame_path_only_pastes(self):
+        layer = self.layer
+        for ch in layer.GAIN_CHARS + '*':
+            self.assertEqual(len(layer.gain[ch]), layer.GAIN_ALPHA)
+        boom = AssertionError('飘字每帧只准贴预渲染字形')
+        im = Image.new('RGBA', (600, 300), (26, 24, 40, 255))
+        with patch.object(Image.Image, 'filter', side_effect=boom), \
+                patch.object(Image.Image, 'rotate', side_effect=boom), \
+                patch.object(Image.Image, 'resize', side_effect=boom), \
+                patch.object(ImageDraw.ImageDraw, 'text', side_effect=boom), \
+                patch.object(fx.ImageFilter, 'GaussianBlur', side_effect=boom):
+            for i in range(12):
+                layer.gain_text(im, 300, 150, '+%d*' % (i * 7), (i + 1) / 12)
+
+    def test_gain_text_noop_cases(self):
+        im = Image.new('RGBA', (400, 200), (26, 24, 40, 255))
+        blank = im.tobytes()
+        self.layer.gain_text(im, 200, 100, '+5*', 0)             # 完全透明档
+        self.layer.gain_text(im, 200, 100, '', 1)                # 空串
+        self.layer.gain_text(im, 200, 100, '??', 1)              # 没有字形的字符
+        fresh = fx.FX(1, 1)                                      # 还没预热字形
+        fresh.gain_text(im, 200, 100, '+5*', 1)
+        self.assertEqual(im.tobytes(), blank)
+        self.layer.gain_text(im, 200, 100, '+5*', 1)
+        self.assertNotEqual(im.tobytes(), blank)
+
+    def test_gain_is_a_show_particle(self):
+        self.assertNotIn('gain', pet.AMBIENT_PARTS)
+        self.assertLess(pet.GAIN_LIFE, 1.2)
+
+    def test_prox_target_clamps_and_is_monotonic(self):
+        f = pet.Pet._prox_target
+        self.assertEqual(f(0), 1)
+        self.assertEqual(f(pet.PROX_NEAR), 1)
+        self.assertEqual(f(pet.PROX_FAR), 0)
+        self.assertEqual(f(5000), 0)
+        vals = [f(d) for d in range(0, 400, 10)]
+        self.assertTrue(all(a >= b for a, b in zip(vals, vals[1:])))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -75,6 +75,7 @@ class DepthWarp:
         self.weights = [[self.region_weights(x/self.w, y/self.h)
                          for x in self.gxs] for y in self.gys]
         self._light_cache = OrderedDict()
+        self._premul_cache = OrderedDict()   # 源图 -> 预乘(RGBa)版,见 _premultiplied
         self._mesh_key = None
         self._mesh = None
         self._shadow_cache = OrderedDict()
@@ -232,7 +233,29 @@ class DepthWarp:
         mesh = self.mesh(pose,lean_rad,squash,bend,bob)
         if skip_clear:
             mesh = [(box,q) for box,q in mesh if self._has_ink(q)]
+        # PIL 对 RGBA 做非最近邻变换时,每次都会先把整张源图转成预乘 RGBa、
+        # 变完再转回 RGBA。源图绝大多数时候是 lit_source 缓存里那两张固定的
+        # 光照图,把它们的预乘版缓存下来,每次变形就少一次整图转换(跳舞时
+        # 变形缓存几乎不命中,每帧都走这里)。输出与 PIL 内部流程逐字节相同。
+        if source.mode == 'RGBA':
+            out = self._premultiplied(source).transform(
+                source.size, Image.Transform.MESH, mesh, Image.Resampling.BILINEAR)
+            return out.convert('RGBA')
         return source.transform(source.size,Image.Transform.MESH,mesh,Image.Resampling.BILINEAR)
+
+    def _premultiplied(self, source):
+        """源图的 RGBa 版本。只缓存 lit_source 缓存里的长寿图(按对象身份);
+        每帧新画的五官贴图是临时 copy,缓存它只会白占内存,直接转换。"""
+        hit = self._premul_cache.get(id(source))
+        if hit is not None and hit[0] is source:
+            self._premul_cache.move_to_end(id(source))
+            return hit[1]
+        premul = source.convert('RGBa')
+        if any(img is source for img in self._light_cache.values()) or source is self.img:
+            self._premul_cache[id(source)] = (source, premul)
+            while len(self._premul_cache) > 3:
+                self._premul_cache.popitem(last=False)
+        return premul
 
     def shadow(self, height, scale=1):
         level = round(clamp(height/max(1,150*scale),0,1)*12)

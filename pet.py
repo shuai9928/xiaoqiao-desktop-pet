@@ -22,7 +22,6 @@ import urllib.request
 import webbrowser
 from collections import OrderedDict
 from ctypes import wintypes
-from tkinter import messagebox   # 五个输入框已换成 themed_input,只剩卸载确认
 
 import agent
 import fx
@@ -32,16 +31,27 @@ from depth_model import DepthWarp, DepthMotion
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageGrab, ImageTk
 
 # 必须在任何 Tk 调用前设 DPI awareness(否则分层窗口尺寸错位)
-try:
-    ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)  # per-monitor v2
-except Exception:
+def _set_dpi_awareness():
+    # SetProcessDpiAwarenessContext 在 user32 里,不在 shcore —— 原来从 shcore
+    # 取它永远 AttributeError,于是一直静默回退到 per-monitor v1,多屏不同缩放
+    # 时对话框会发虚。参数是指针大小的句柄,必须声明 argtypes。
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)        # per-monitor
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        u32.SetProcessDpiAwarenessContext.restype = ctypes.c_int
+        if u32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):  # per-monitor v2
+            return
     except Exception:
+        pass
+    for level in (2, 1):            # per-monitor v1 / system DPI aware
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)    # system DPI aware
+            ctypes.windll.shcore.SetProcessDpiAwareness(level)
+            return
         except Exception:
             pass
+
+
+_set_dpi_awareness()
 
 try:
     import pystray
@@ -132,6 +142,7 @@ FAST_STATES = frozenset((
     "dance", "flip", "roll", "twirl", "transform",
     "fly", "fall", "peek", "stretch", "wave", "sneeze",
     "chase",                         # 整只横向追光标,30fps 有台阶感
+    "meditate",                      # 浮空冥想:环绕星尘 + 悬停起伏
     "dizzy"))                        # dizzy_amp 驱动的高频摇摆,欠采样会抖
 # 氛围粒子:慢速飘浮的环境元素,20fps 也看不出差别,不该把待机拽到 60fps
 # (与之相对,"star/confetti/gear"这类演出粒子速度快,仍然走 60fps 档)
@@ -144,6 +155,18 @@ AMBIENT_PARTS = frozenset(
 # 顶成 60fps 并持续整个粒子寿命,别用。
 FOCUS_ENCOURAGE = (240.0, 420.0)
 FAST_BUDGET_MS = 13.0    # 单帧滑动平均超过它就退回 30fps(16ms 排期留余量)
+RIPPLE_PERIOD = 5.2      # 法阵光纹:每隔多久荡出一道
+RIPPLE_TRAVEL = 1.8      # 一道光纹从内圈走到外圈用多久
+HIT_RING_LIFE = 0.38     # 命中光环(hit_ring 粒子)寿命,一次点击的"啪"
+# 蹦跳:一次 hop 拆成"蹲一下 + 若干个抛物线小跳"。原来用全局时钟的
+# abs(sin(16t)),起跳那帧可能正落在半空(凭空瞬移上去),结束那帧也可能
+# 在半空(啪地掉回地面),每次触地也没有压扁。
+HOP_CROUCH = 0.07
+HOP_PERIOD = 0.2
+GAIN_LIFE = 0.95         # 星光飘字 "+N✦" 从出现到淡完
+# 光标感应:光标离她胸口多远时法阵开始"醒"、多近时满(px/scale)
+PROX_FAR = 320.0
+PROX_NEAR = 120.0
 SPRITE_H = 350
 FEET_GAP = 140
 SPEED = 40.0
@@ -633,13 +656,16 @@ def premult_bgra(img):
     预乘单趟 convert("RGBa") 在 C 里做完,比 3 次 ImageChops.multiply
     + merge 快约 1/3(645x780 实测 7.8ms → 5.2ms,全屏画布省得更多);
     Pillow 没有 RGBa→BGRA 的 packer,字节序用 bytearray 切片把 R/B
-    对调。与旧实现逐字节比只有 0.9% 的中间 alpha 像素差 ±1 舍入,
+    对调(现已改用 Pillow 自带的 BGRa packer)。与旧实现逐字节比只有 0.9% 的中间 alpha 像素差 ±1 舍入,
     肉眼不可见。Windows 32 位 DIB(BI_RGB)按 B,G,R,A 存放,所以必须
     是 BGRA —— 直接 RGBA 取字节会让蓝发变橙发。
     """
-    b = bytearray(img.convert("RGBa").tobytes("raw", "RGBa"))
-    b[0::4], b[2::4] = b[2::4], b[0::4]
-    return bytes(b)
+    # Pillow 的 RGBa 模式带 BGRa packer,一步取出预乘 BGRA 字节;原来的
+    # bytearray 手工对调 R/B 与之逐字节相同,但多两次整帧拷贝(3.6ms -> 2.1ms)。
+    # 已经是 RGBa 的(预乘域降采样出来的帧)不再转换。
+    if img.mode != "RGBa":
+        img = img.convert("RGBa")
+    return img.tobytes("raw", "BGRa")
 
 
 def load_font(size, sym=False):
@@ -976,6 +1002,15 @@ class Pet:
         self._catch_total = 0       # 接星星小游戏:剩余可捕捉数
         self._catch_got = 0         # 已接住数
         self.catch_best = int(self.settings.get("catch_best", 0))  # 单局最高纪录
+        self.battery_watch = bool(self.settings.get("battery_watch", True))
+        self._batt_prev = None          # 上一次采样的 (接着电源, 电量%)
+        self._batt_next = 0.0           # 下次采样时间(每分钟一次)
+        self._batt_star_cd = 0.0        # 插电送星光的冷却,防反复插拔刷星光
+        self._stats_dirty = False       # 今日计数有改动待落盘
+        self._stats_next_save = 0.0
+        self._walk_phase = 0.0          # 步相:按走过的距离推进,整数处落脚
+        self._step_flash = 0.0          # 最近一次落脚的时刻:脚下法阵跟着亮一下
+        self.meditate_start = 0.0
         self.pomo_done = int(self.settings.get("pomo_done", 0))    # 累计完成专注次数
         self.drag = None
         self.stroke_acc = 0.0
@@ -1125,7 +1160,7 @@ class Pet:
         cfg_x = int(self.settings.get("x", self.sw * 0.68))
         self.x = max(self.x_min, min(cfg_x, self.x_max))
         self._clamp_pos()
-        root.geometry(f"{self.W}x{self.H}+{self.x}+{int(self.fy - self.FOOT_Y)}")
+        root.geometry(f"{self.W}x{self.H}+{int(self.x)}+{int(self.fy - self.FOOT_Y)}")
         root.title("小乔 · 时之魔女")
         root.overrideredirect(True)
         root.attributes("-topmost", self.topmost)
@@ -1175,8 +1210,7 @@ class Pet:
         # AI 库预热:google.genai 的 import 要一秒多,推迟到首次聊天才加载
         # 的话,第一句话会卡一下 —— 开机 25 秒后趁没人在意,后台补加载
         if self.brain:
-            self.root.after(25000, lambda: threading.Thread(
-                target=self.brain.prewarm, daemon=True).start())
+            self.root.after(25000, self._prewarm_ai)
         self.tick()
         if selftest:
             root.after(3200, root.destroy)
@@ -1338,6 +1372,7 @@ class Pet:
                            "affection": round(self.affection, 1), "rps": self.rps,
                            "water_min": self.water_min,
                            "fg_watch": self.fg_watch,
+                           "battery_watch": self.battery_watch,
                            "tts_on": self.tts_on,
                            "tts_volume": self.tts_volume,
                            "sound_on": self.sound_on,
@@ -1425,9 +1460,12 @@ class Pet:
         return sc, alpha
 
     def add_part(self, kind, rx, ry, *, vx=0.0, vy=0.0, life=1.0, size=6,
-                 color=GOLD, phase=0.0, spin=0.0, grav=0.0, txt=None):
+                 color=GOLD, phase=0.0, spin=0.0, grav=0.0, txt=None, born=None):
+        # born 可指定在未来:渲染对 age<0 的粒子直接跳过,清理只删 age>=life 的,
+        # 于是天然成为"延迟出场"
         self.parts.append(dict(kind=kind, x=self.W / 2 + rx, y=self.H / 2 + ry,
-                               vx=vx, vy=vy, born=time.time(), life=life, size=size,
+                               vx=vx, vy=vy, born=time.time() if born is None else born,
+                               life=life, size=size,
                                color=color, phase=phase, spin=spin, grav=grav, txt=txt))
         if kind == 'ball':
             self.parts[-1].update(sim_steps=0, trail=[], grounded=False, life=5.0)
@@ -1452,6 +1490,41 @@ class Pet:
                           color=random.choice(colors),
                           phase=random.uniform(0, 6.28), spin=random.uniform(-9, 9),
                           grav=190)
+
+    def _click_rel(self, default_ry):
+        """刚才那一下点在哪(相对窗口中心)。不是鼠标点出来的调用(聊天里
+        说"摸摸头"、pet_cmd.json)没有新鲜的点击位置,落回默认的头顶。"""
+        c = getattr(self, "_last_click", None)
+        if c and time.time() - c[2] < 0.6:
+            return c[0] - self.W / 2, c[1] - self.H / 2
+        return 0.0, default_ry * self.H
+
+    def gain_star(self, amount, rx=0.0, ry=None):
+        """加星光并在画面上飘一行 "+N✦"。返回实际加上的量(满了就少加)。
+
+        原来星光增减只改数字,只有托盘悬停和右键卡片能看到 —— 接星、喂糖
+        这些"攒星光"的时刻,画面上没有任何对应。飘的是实际加上的量:星光
+        快满时喂糖不会谎报 +40。不足 1 点不飘。"""
+        gained = max(0.0, min(float(amount), 100.0 - self.star))
+        self.star = min(100.0, self.star + amount)
+        if gained >= 1:
+            self.add_part("gain", rx, -0.36 * self.H if ry is None else ry,
+                          vy=-46 * self.scale, life=GAIN_LIFE, size=1.0,
+                          txt="+%d*" % round(gained))
+        return gained
+
+    @staticmethod
+    def _prox_target(dist):
+        """光标距离(px/scale) -> 法阵感应强度 0..1,两端夹住、中间线性。"""
+        return max(0.0, min(1.0, (PROX_FAR - dist) / (PROX_FAR - PROX_NEAR)))
+
+    def hit_ring(self, rx, ry, palette="gold", double=False):
+        """命中光环:点中的那一下在落点"啪"地亮一圈。粒子是飘走的,只有它
+        钉在原地,手感上才有"打中了"。double=连击时紧跟着再荡一圈。"""
+        self.add_part("hit_ring", rx, ry, life=HIT_RING_LIFE, txt=palette)
+        if double:
+            self.add_part("hit_ring", rx, ry, life=HIT_RING_LIFE, txt=palette,
+                          born=time.time() + 0.09)
 
     def hearts(self, rx, ry, n=4):
         for _ in range(n):
@@ -1479,8 +1552,43 @@ class Pet:
         self.bubble = (text, self._bubble_born + dur)
 
     def hop(self, strength=0.7):
-        self.hop_t = strength
-        self.squash = 0.9
+        # 时长凑成整数个小跳,最后一跳正好落回地面;hop_t 仍是"剩余秒数",
+        # 其他地方拿 hop_t > 0 判断"正在蹦"的语义不变。
+        n = max(2, round(strength / HOP_PERIOD))
+        self.hop_t = self._hop_total = HOP_CROUCH + n * HOP_PERIOD
+        self._hop_amp = strength
+        self.squash = 0.9            # 蹲一下蓄力,起跳前保持住
+
+    @staticmethod
+    def _hop_curve(age, total, amp):
+        """蹦跳第 age 秒的离地高度(px/scale)。
+
+        每个小跳是一条抛物线 —— 触地瞬间干净地折返;旧的 abs(sin) 按 30fps
+        采样时谷底几乎踩不到 0,看着一直悬在半空抖。一跳比一跳低,峰值沿用
+        原来的 5 + 10*力度,手感高度不变。
+
+        不做空中拉伸:变形缓存按 round(squash*12) 分档,±0.045 的拉伸跨不过
+        档位边界,画出来和没拉一样(实测见 EXPERIMENTS E22)。
+        """
+        if age < HOP_CROUCH or age >= total:
+            return 0.0
+        a = (age - HOP_CROUCH) / HOP_PERIOD
+        i = int(a)
+        u = a - i
+        n = max(1, round((total - HOP_CROUCH) / HOP_PERIOD))
+        return (5 + 10 * amp) * max(0.0, 1.0 - i / n) * 4 * u * (1 - u)
+
+    @staticmethod
+    def _hop_touchdown(prev_age, age, total):
+        """这一帧里有没有触地(帧率无关:按跨过的触地时刻判断)。"""
+        if prev_age >= total or age <= HOP_CROUCH:
+            return False
+        if age >= total:
+            return True
+        # prev 夹到蹲完那一刻:跨过起跳点的那一帧,(prev-蹲)是负数,地板除
+        # 得 -1,会把"起跳"误数成一次触地
+        prev_age = max(prev_age, HOP_CROUCH)
+        return int((prev_age - HOP_CROUCH) // HOP_PERIOD) < int((age - HOP_CROUCH) // HOP_PERIOD)
     def wake_if_sleep(self, line=None):
         if self.state in ("sleep", "yawn"):
             self.state = "idle"
@@ -1492,6 +1600,7 @@ class Pet:
                 self.say(line, 2.5)
 
     def pet_head(self):
+        self._count_today("pet")
         if random.random() < 0.05 and time.time() > getattr(self, "_gift_cd", 0):
             # 5% 摸头送星光糖(5 分钟冷却):星光+5 + 谢谢表情
             self._gift_cd = time.time() + 300
@@ -1500,7 +1609,7 @@ class Pet:
                 "送你一颗星光糖~", "今天也想给你甜甜~", "喏,这颗是你的~",
                 "嘿嘿,藏着当零食吧~", "别客气呀~"]), 2.6)
             self.play_emotion("thanks", 3.2)
-            self.star = min(100.0, self.star + 5)
+            self.gain_star(5)
             self.add_part("sparkle", 0, -0.2 * self.H, life=0.7,
                           size=random.uniform(5, 9), color=GOLD_L,
                           phase=random.uniform(0, 6.28),
@@ -1531,6 +1640,7 @@ class Pet:
             self._pet_combo_cd = now + 60
             self.sfx.play("voice_giggle")
             self.play_emotion("shy", 3.0)
+            self.hit_ring(*self._click_rel(-0.27), palette="pink", double=True)
             self.hearts(0, -0.28, 8)
             self.say(random.choice(MELT_LINES), 3.0)
             self.add_affection(3)
@@ -1566,6 +1676,7 @@ class Pet:
             self.add_affection(1.5)
             return
         self.sfx.play("voice_happy")
+        self.hit_ring(*self._click_rel(-0.27), palette="pink")
         if not self._start_micro_motion("nuzzle"):
             self.hop()
         # R102/R103:离开 30s+ 回来时多 1~2 颗爱心 + 口吻更黏
@@ -1588,11 +1699,13 @@ class Pet:
         self.add_affection(1.5 if long_away else 1.0)
 
     def tickle_body(self):
+        self._count_today("tickle")
         self.last_interact = time.time()
         if self.state in ("sleep", "yawn"):
             self.wake_if_sleep()
             return
         self.sfx.play("voice_giggle")
+        self.hit_ring(*self._click_rel(-0.08))
         if not self._start_micro_motion("giggle"):
             self.lean_kick = 0.9
         # 笑到抖星星:身上簌簌掉几粒时之沙
@@ -1639,7 +1752,7 @@ class Pet:
                 mon = time.localtime().tm_mon
                 self.say(random.choice(
                     self.SEASON_SAY[self._season(mon)]), 2.6)
-            elif self.brain and self.brain.available and now > self._ai_cur_cd:
+            elif self._ai_ready() and now > self._ai_cur_cd:
                 self._ai_cur_cd = now + 180
                 self._ai_quick("随便和主人说点什么,一句就好")
             else:
@@ -1858,7 +1971,7 @@ class Pet:
             self.wake_if_sleep(random.choice(WAKE_LINES))
             return
         pick = random.choice(("burst", "dance", "peek", "proud", "twirl",
-                              "flip", "roll"))
+                              "flip", "roll", "meditate"))
         if pick == "burst":
             self.sfx.play("sparkle")
             self.star_burst(0, -0.1, 14, sp=(120, 240), grav=180, size=(5, 11))
@@ -1869,6 +1982,8 @@ class Pet:
             self.start_dance()
         elif pick == "peek":
             self.start_peek()
+        elif pick == "meditate":
+            self.start_meditate()
         elif pick == "twirl":
             self.start_twirl()
         elif pick == "flip":
@@ -2528,14 +2643,23 @@ class Pet:
         self.wave_start = time.time()
         self.state_until = self.wave_start + 2.6
         self._wave_until = self.state_until
+        s = self.scale
         self._begin_tl(
             tracks={
-                "lean":   [(0, 0.0), (.3, -.065), (.65, .045), (.95, -.06),
-                           (1.25, .04), (1.55, -.05), (1.85, .025), (2.2, -.02), (2.6, 0)],
-                "_bend":  [(0, 0), (.3, -.055), (.65, .05), (.95, -.05),
-                           (1.25, .04), (1.55, -.04), (1.85, .02), (2.6, 0)],
+                # 四拍挥手:身体朝抬手那侧压过去再回弹,每拍再踮一下脚。
+                # 原来 lean 只有 ±0.065(约 4°),隔几帧连拍根本分不出她在动,
+                # 看着就是站着说句话 —— 幅度提到接近打招呼该有的样子。
+                "lean":   [(0, 0.0), (.3, -.115), (.65, .075), (.95, -.105),
+                           (1.25, .07), (1.55, -.09), (1.85, .05),
+                           (2.2, -.035), (2.6, 0)],
+                "_bend":  [(0, 0), (.3, -.10), (.65, .075), (.95, -.09),
+                           (1.25, .065), (1.55, -.07), (1.85, .04), (2.6, 0)],
+                "_spin_lift": [(0, 0.0), (.3, 5.0 * s), (.54, 0.0), (.95, 5.0 * s),
+                               (1.18, 0.0), (1.55, 4.0 * s), (1.78, 0.0),
+                               (2.15, 3.0 * s), (2.42, 0.0)],
                 "look_x": [(0, 0.0), (0.3, 0.5), (2.2, 0.5), (2.6, 0.0)],
-                "squash": [(0, 1.0), (0.25, 0.94), (0.5, 1.0)],
+                "squash": [(0, 1.0), (0.25, 0.94), (0.5, 1.0), (0.9, 0.965),
+                           (1.12, 1.0), (1.5, 0.975), (1.72, 1.0)],
             },
             events=[
                 (0.0, lambda p: (p.sfx.play("greet"),
@@ -2888,13 +3012,15 @@ class Pet:
             (0.08, (255, 200, 220), 10),
             (0.16, (180, 220, 255), 8),
         ]):
+            # 每圈的出生时间原来算好了却没传进去,三圈其实同一瞬间炸开,
+            # 文档说的"错峰"从没生效过
             t = self.magic_start + delay
             for j in range(n):
                 a = j * (2 * math.pi / n) + i * 0.4
                 self.add_part("magic_burst", cx + math.cos(a) * 60,
                               -0.2 * self.H + math.sin(a) * 30,
                               vx=0, vy=0, life=1.0 + i * 0.2,
-                              size=20 + i * 8, color=color, phase=a)
+                              size=20 + i * 8, color=color, phase=a, born=t)
         for k in range(4):
             x_off = 0.42 * self.W * (1 if k % 2 == 0 else -1)
             y_off = 0.4 * self.H * (1 if k < 2 else -1)
@@ -2925,10 +3051,12 @@ class Pet:
             self.say("等等,我还在半空呢!", 1.6)
             return
         self.sfx.play("voice_yum")
+        self._count_today("candy")
         self.state = "eat"
         self.hop_t = self.lean_kick = 0.0
         self.eat_start = time.time()
         self.state_until = self.eat_start + 2.2
+        self._eat_beats = set()
 
     @staticmethod
     def _candy_path(age):
@@ -2943,8 +3071,8 @@ class Pet:
     def _eat_pose(self, age):
         # 迎接糖果→三次轻咀嚼→满足地点头;终点回到中性姿势。
         squash = self._track(age, [(0, 1), (.35, .97), (.85, 1.035),
-            (1.1, 1), (1.24, .97), (1.38, 1.025), (1.52, .975),
-            (1.66, 1.02), (1.8, .98), (1.96, 1.035), (2.2, 1)])
+            (1.1, 1), (1.24, .96), (1.38, 1.04), (1.52, .962),
+            (1.66, 1.035), (1.8, .965), (1.96, 1.04), (2.2, 1)])
         bend = self._track(age, [(0, 0), (.6, .10), (1.1, .06),
                                 (1.65, -.035), (1.95, .04), (2.2, 0)])
         return squash, bend
@@ -3048,6 +3176,8 @@ class Pet:
         """把一条对话写进可见记录并落盘。role: user / qiao"""
         if not text:
             return
+        if role == "user":
+            self._count_today("chat")
         self.chat_log.append({"role": role, "text": text, "t": time.time(),
                               "emotion": emotion})
         self.chat_log = self.chat_log[-200:]
@@ -3059,7 +3189,8 @@ class Pet:
                 json.dump(self.chat_log, f, ensure_ascii=False)
             os.replace(tmp, self.chat_path)
         except Exception:
-            pass
+            # 不能静默:写失败意味着这段对话重启就没了(去重记日志,不刷屏)
+            self._log_exc("chat_save")
 
     def clear_chat(self):
         self.chat_log = []
@@ -3300,11 +3431,13 @@ class Pet:
         if isinstance(res, tuple) and res[0] == "confirm":
             name, cmd = res[1]
             self._reply(f"要卸载「{name}」吗?我把确认框调出来咯", "curious")
-            if messagebox.askyesno("小乔 · 确认卸载",
+            # 原来用 messagebox.askyesno,测试时被不明事件答了「是」,把哔哩哔哩
+            # 真卸掉了;换成项目自己的主题确认框,和其他对话框一致
+            if self.themed_confirm("小乔 · 确认卸载",
                                    f"真的要卸载「{name}」吗?\n\n"
-                                   f"我只负责把它的官方卸载程序调起来,\n"
-                                   f"后面的步骤还是你自己点哦。",
-                                   parent=self.root):
+                                   "我会在资源管理器里把它的卸载程序指出来,\n"
+                                   "你双击它才会真的开始卸载。",
+                                   yes="指给我看", no="算了"):
                 ok = agent.run_uninstaller(cmd)
                 self._reply("我把卸载程序给你指出来啦,双击它就行~" if ok
                             else "找不到卸载程序…", "roger" if ok else "pouty")
@@ -3341,6 +3474,7 @@ class Pet:
         (("挥手", "打招呼", "你好呀"), "start_wave"),
         (("打滚", "滚一滚"), "start_roll"),
         (("变身", "星光形态"), "start_transform"),
+        (("冥想", "飘起来", "浮空"), "start_meditate"),
         (("唱首歌", "唱歌", "唱一首"), "sing"),
         (("撒星星", "星星雨", "接星星"), "star_rain"),
         (("施魔法", "变魔法", "时间魔法"), "cast_magic"),
@@ -3510,7 +3644,7 @@ class Pet:
         g["tries"] += 1
         if n == g["n"]:
             self._guess = None
-            self.star = min(100.0, self.star + 5)   # 猜中奖励:星光 +5
+            self.gain_star(5)                        # 猜中奖励:星光 +5
             self.confetti_burst(0, -0.1, 24)
             self.sfx.play("levelup")
             self._reply(f"猜对了!就是 {n}!用了 {g['tries']} 次,厉害呀~", "excited")
@@ -3677,7 +3811,8 @@ class Pet:
                 json.dump(self.reminders, f, ensure_ascii=False)
             os.replace(tmp, REMINDERS_FILE)
         except Exception:
-            pass
+            # 提醒没落盘,重启后到点就不会响 —— 至少留下痕迹
+            self._log_exc("reminders_save")
 
     def _schedule_reminder(self, minutes, text, quiet=False):
         """定一个一次性提醒,到点由 _tick_body 触发(不用 after,重启也能活)。"""
@@ -3924,6 +4059,164 @@ class Pet:
                            f"根据这个说一句关心或吐槽(20字内),别复述标题。")
         else:
             self._reply(fallback, "curious")
+
+    # ---- 电量感知(笔记本):插拔电源、低电量、充满 ----
+    def toggle_battery_watch(self):
+        self.battery_watch = not self.battery_watch
+        self._batt_prev = None
+        self.save_settings()
+        self.say("好,电量有变化我会告诉你~" if self.battery_watch
+                 else "好,不念叨电量啦~", 2.4)
+
+    @staticmethod
+    def _power_status():
+        """(接着电源, 电量%)。台式机没有电池或读不到时返回 None。"""
+        s = _PowerStatus()
+        try:
+            if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(s)):
+                return None
+        except Exception:
+            return None
+        if s.BatteryFlag & 128 or s.BatteryLifePercent > 100 or s.ACLineStatus > 1:
+            return None
+        return bool(s.ACLineStatus), int(s.BatteryLifePercent)
+
+    @staticmethod
+    def _battery_event(prev, cur):
+        """比较前后两次采样,返回要演的事件名;阈值只在跨过的那一次触发。"""
+        if not prev or not cur:
+            return None
+        (pac, ppct), (ac, pct) = prev, cur
+        if ac and not pac:
+            return "plug"
+        if pac and not ac:
+            return "unplug"
+        if not ac and pct <= 10 < ppct:
+            return "critical"
+        if not ac and pct <= 20 < ppct:
+            return "low"
+        if ac and pct >= 100 > ppct:
+            return "full"
+        return None
+
+    def _battery_tick(self, now):
+        if not self.battery_watch or now < self._batt_next:
+            return
+        self._batt_next = now + 60.0
+        cur = self._power_status()
+        ev = self._battery_event(self._batt_prev, cur)
+        self._batt_prev = cur
+        # 专注时和睡着时不打扰;事件本身已记下,不会攒着事后补报
+        if ev and not self.focus_mode() and self.state not in ("sleep", "yawn"):
+            self._battery_react(ev, cur[1])
+
+    def _battery_react(self, ev, pct):
+        now = time.time()
+        if ev == "plug":
+            # 充能:金色星星往上飘(负重力),脚下一圈闪光
+            self.star_burst(0, 0.05, 10, sp=(80, 160), grav=-60, size=(4, 8))
+            self.circles.append(dict(born=now, life=0.6, rx=0.9, kind="flash"))
+            self.play_emotion("excited", 2.2)
+            if now > self._batt_star_cd:
+                self._batt_star_cd = now + 600
+                self.gain_star(5)
+                self.say(random.choice(["充能中~星光也 +5!", "电来啦,满血复活!"]), 2.4)
+            else:
+                self.say("充能中~", 1.8)
+        elif ev == "unplug":
+            self.play_emotion("curious", 2.0)
+            self.say(random.choice(["拔掉电源啦,省着点用哦~",
+                                    "要出门吗?电量省着花~"]), 2.4)
+        elif ev == "low":
+            self.play_emotion("tired", 2.6)
+            self.say(f"电量只剩 {pct}% 了…我也有点困", 2.8)
+        elif ev == "critical":
+            self.hop(0.6)
+            self.play_emotion("surprised", 2.4)
+            self.say(f"电量 {pct}%!快找充电器!", 3.0)
+        elif ev == "full":
+            self.play_emotion("proud", 2.2)
+            self.say("电充满啦!可以拔掉了~", 2.4)
+
+    # ---- 今日小结:当天的陪伴计数,跨天自动清零 ----
+    TODAY_LABELS = (("pet", "摸头 {} 次"), ("candy", "喂糖 {} 颗"),
+                    ("catch", "接星 {} 颗"), ("focus_min", "专注 {} 分钟"),
+                    ("chat", "聊天 {} 句"), ("tickle", "挠痒 {} 次"))
+
+    def _today_stats(self):
+        today = time.strftime("%Y-%m-%d")
+        settings = getattr(self, "settings", None)
+        if not isinstance(settings, dict):
+            # 测试里的壳桌宠没有存档字典:给个不落盘的空统计,别让卡片打不开
+            return {"date": today}
+        st = settings.get("today_stats")
+        if not isinstance(st, dict) or st.get("date") != today:
+            st = {"date": today}
+            settings["today_stats"] = st
+        return st
+
+    def _count_today(self, key, n=1):
+        st = self._today_stats()
+        st[key] = int(st.get(key, 0)) + int(n)
+        self._stats_dirty = True
+
+    def _today_summary(self, limit=None):
+        st = self._today_stats()
+        items = [fmt.format(st[k]) for k, fmt in self.TODAY_LABELS if st.get(k)]
+        return " · ".join(items[:limit] if limit else items)
+
+    def _stats_tick(self, now):
+        # 计数不逐次写盘(连摸很频繁):有改动时最多每分钟落一次,退出时 quit 也会存
+        if self._stats_dirty and now > self._stats_next_save:
+            self._stats_next_save = now + 60.0
+            self._stats_dirty = False
+            self.save_settings()
+        # 晚上 9 点后第一次安静空闲时,轻声总结一下今天(每天一次)
+        today = time.strftime("%Y-%m-%d")
+        if (time.localtime().tm_hour >= 21 and self.settings.get("summary_day") != today
+                and self.state == "idle" and not self.bubble and not self.drag
+                and not self.focus_mode() and now - self.last_interact > 20):
+            self.settings["summary_day"] = today
+            s = self._today_summary()
+            if s:
+                self.say(f"今天{s},辛苦啦~", 4.0)
+                self.play_emotion("thanks", 2.4)
+
+    # ---- 浮空冥想 ----
+    def start_meditate(self):
+        """浮空冥想:缓缓升空,腰间三股星尘绕行,悬停时轻轻起伏,最后柔柔落地。"""
+        if self.state in ("sleep", "yawn"):
+            self.wake_if_sleep()
+        if self.state not in ("idle", "sticker", "walk"):
+            return
+        self.last_interact = time.time()
+        self.state = "meditate"
+        self.meditate_start = time.time()
+        self.state_until = self.meditate_start + 5.6
+        s = self.scale
+        self._begin_tl(
+            tracks={
+                "_spin_lift": [(0, 0.0), (0.25, 0.0), (1.2, 36.0 * s),
+                               (4.3, 36.0 * s), (5.2, 0.0)],
+                "squash":     [(0, 1.0), (0.25, 0.93), (0.6, 1.04), (1.0, 1.0),
+                               (5.15, 1.0), (5.3, 0.9), (5.6, 1.0)],
+                "_bend":      [(0, 0.0), (1.2, 0.0), (2.4, 0.025), (3.4, -0.025),
+                               (4.3, 0.0)],
+            },
+            events=[
+                (0.0, lambda p: (p.play_emotion("mild", 2.4),
+                                 p.say(random.choice(["静下心来…", "深呼吸~",
+                                                      "感受星光的流动…"]), 2.2))),
+                (1.2, lambda p: p.circles.append(
+                    dict(born=time.time(), life=0.7, rx=0.8, kind="flash"))),
+                (2.8, lambda p: p.star_burst(0, -0.18, 6, sp=(40, 90), grav=30,
+                                             size=(4, 7))),
+                (5.2, lambda p: (p._shocks.append(dict(born=time.time(), strength=.3)),
+                                 p.star_burst(0, 0.1, 8, sp=(70, 140), grav=200),
+                                 p.play_emotion("proud", 2.2),
+                                 p.say(random.choice(["神清气爽~", "灵感满满!",
+                                                      "呼…好舒服"]), 2.2))),
+            ])
 
     def toggle_fg_watch(self):
         self.fg_watch = not self.fg_watch
@@ -4297,6 +4590,26 @@ class Pet:
         self._reply(f"找到 {len(hits)} 个,第一个已经帮你定位:\n{lines}{more}",
                     "excited")
 
+    def _prewarm_ai(self):
+        """开机 25 秒后在后台把 SDK 预热好。没配 AI 时 brain 是 None ——
+        原来这里直接取 self.brain.prewarm,于是凡是没填密钥的用户,开机
+        25 秒必定往 pet_error.log 抛一次 AttributeError。"""
+        if self.brain:
+            threading.Thread(target=self.brain.prewarm, daemon=True).start()
+
+    def _ai_ready(self):
+        """被动检查用的 AI 就绪判断,绝不在主线程里同步 import google.genai。
+
+        brain.available 首次访问会当场导入 SDK(约 0.8 秒)。原来第一帧 tick
+        的主动搭话检查就访问了它,把开机 25 秒后台预热抵消了,冷启动多卡
+        0.8 秒。发消息、开聊天框这类互动路径仍直接用 available。
+        """
+        b = self.brain
+        if not b:
+            return False
+        ready = getattr(b, "ready", None)      # 测试里的假 brain 可能只有 available
+        return bool(b.available if ready is None else ready)
+
     def _ai_quick(self, hint=""):
         if not (self.brain and self.brain.available):
             return
@@ -4352,7 +4665,9 @@ class Pet:
             return False
         self.parts.remove(hit)
         self._catch_got += 1
-        self.star = min(100.0, self.star + 2)
+        self._count_today("catch")
+        # 飘字从接住的那颗星的位置升起
+        self.gain_star(2, hit["x"] - self.W / 2, hit["y"] - self.H / 2 - 18 * self.scale)
         self.add_part("sparkle", hit["x"] - self.W / 2, hit["y"] - self.H / 2,
                       life=0.6, size=random.uniform(6, 10), color=GOLD_L,
                       phase=random.uniform(0, 6.28))
@@ -4364,6 +4679,8 @@ class Pet:
         else:
             self._catch_combo = 1
         self._catch_last = now2
+        self.hit_ring(hit["x"] - self.W / 2, hit["y"] - self.H / 2,
+                      double=self._catch_combo >= 2)
         combo_txt = f" 连击x{self._catch_combo}!" if self._catch_combo >= 2 else ""
         if self._catch_combo >= 4:
             self.confetti_burst(hit["x"] - self.W / 2, hit["y"] - self.H / 2, 6)
@@ -4381,7 +4698,8 @@ class Pet:
                 self.confetti_burst(0, -0.1, 14)
                 self.play_emotion("proud", 2.4)
             else:
-                self.star = min(100.0, self.star + (3 if fast else 0))
+                if fast:
+                    self.gain_star(3)
                 self.say(random.choice(
                     ["神速!手气爆棚!" if fast else "全接住了!",
                      f"{self._catch_got} 颗全接住,谢谢你~" if not fast else "太强了吧!",
@@ -4476,6 +4794,11 @@ class Pet:
         dx = e.x_root - self.drag[0]
         dy = e.y_root - self.drag[1]
         if abs(dx) + abs(dy) > 5:
+            if not self.drag[4]:
+                # 刚从"按住"变成"拖动"的那一下:在手抓住的位置亮一圈。窗口跟着
+                # 手走,光环钉在窗口坐标上,也就一直在手底下
+                self.hit_ring(self.drag[0] - self.drag[2] - self.W / 2,
+                              self.drag[1] - (self.drag[3] - self.FOOT_Y) - self.H / 2)
             self.drag = self.drag[:4] + (True, self.drag[5])
             if self.state in ("walk", "dance", "roll", "stretch", "peek", "chase",
                               "sneeze", "fall_stand"):
@@ -4524,6 +4847,7 @@ class Pet:
             return
         self.click_token += 1
         token = self.click_token
+        self._last_click = (e.x, e.y, time.time())
         spr_h = self._spr_disp_h()
         head_y = self.FOOT_Y - spr_h * 0.58
         if e.y < head_y:
@@ -4715,6 +5039,8 @@ class Pet:
                         command=self.toggle_tts)
         cfg.add_command(label="偷看窗口:" + ("开" if self.fg_watch else "关"),
                         command=self.toggle_fg_watch)
+        cfg.add_command(label="电量提醒:" + ("开" if self.battery_watch else "关"),
+                        command=self.toggle_battery_watch)
         cfg.add_separator()
         szm = self._menu(cfg)
         for label, s in (("小 80%", 0.8), ("中 100%", 1.0), ("大 125%", 1.25),
@@ -4755,7 +5081,7 @@ class Pet:
         self._refresh_screen()          # 尺寸变了,边界要跟着重算
         self._clamp_pos()
         self.rebuild_scale_cache()
-        self.root.geometry(f"{self.W}x{self.H}+{self.x}+{int(self.fy - self.FOOT_Y)}")
+        self.root.geometry(f"{self.W}x{self.H}+{int(self.x)}+{int(self.fy - self.FOOT_Y)}")
         self.save_settings()
 
     def _refresh_screen(self):
@@ -4998,6 +5324,8 @@ class Pet:
         elif op == "remind":
             # 外部(ZCode/脚本)也能塞提醒进来:{"op":"remind","minutes":5,"text":"..."}
             self._schedule_reminder(cmd.get("minutes", 25), cmd.get("text", ""))
+        elif op == "meditate":
+            self.start_meditate()
         elif op == "announce":
             # ZCode hook 用:任务完成/需要确认时播报,不走 AI 直接说
             self._reply(str(cmd.get("text", ""))[:200],
@@ -5013,7 +5341,7 @@ class Pet:
                 "bubble": self.bubble[0] if self.bubble else None,
                 "history_n": len(self.history),
                 "ai_thinking": self.ai_thinking,
-                "brain_ok": bool(self.brain and self.brain.available),
+                "brain_ok": self._ai_ready(),
                 "panel_visible": bool(cb and cb.win.winfo_exists()
                                       and cb.win.winfo_ismapped()),
                 "chat_log": (cb.log.get("1.0", "end") if cb else None),
@@ -5049,16 +5377,16 @@ class Pet:
             else:
                 t0 = time.perf_counter()
                 self._tick_body()
+                spent = (time.perf_counter() - t0) * 1000.0
                 # 单帧耗时滑动平均 + 迟滞。60fps 只在真的画得动的机器上开:
                 # 画不动却硬排 16ms,结果是排期积压后的抖动,比稳定 30fps
                 # 还难看。带迟滞是免得在阈值上来回横跳。
-                self._frame_ms += ((time.perf_counter() - t0) * 1000.0
-                                   - self._frame_ms) * 0.1
+                self._frame_ms += (spent - self._frame_ms) * 0.1
                 if self._frame_ms > FAST_BUDGET_MS:
                     self._fast_ok = False
                 elif self._frame_ms < FAST_BUDGET_MS * 0.7:
                     self._fast_ok = True
-                delay = self._frame_delay()
+                delay = self._paced_delay(spent)
         except Exception:
             self._log_exc("tick")
         self.root.after(delay, self.tick)
@@ -5118,6 +5446,16 @@ class Pet:
                 os._exit(1)   # execv 失败(杀软拦截等)也要把僵尸放掉
 
         threading.Thread(target=guard, daemon=True, name="watchdog").start()
+
+    def _paced_delay(self, spent_ms):
+        """下一帧还要等多久 = 目标帧间隔 - 这一帧已经花掉的时间。
+
+        原来是干完活再固定 after(_frame_delay()),渲染耗时被叠加进间隔:
+        标称 30fps 的档位,一帧画 36ms 时实际只有 13fps(跳舞实测)。而且
+        _tick_body 的 dt 上限是 50ms,帧间隔超过它时,按时间推进的动作会被
+        放慢成慢动作。最少留 4ms,给 Tk 处理鼠标键盘事件的空隙。
+        """
+        return max(4, int(self._frame_delay() - spent_ms))
 
     def _frame_delay(self):
         """按"画面上还有没有东西在动"决定下一帧间隔。
@@ -5253,6 +5591,16 @@ class Pet:
         wcy = self.fy - self.H * 0.18
         near = math.hypot(mx - wcx, my - (self.fy - self.H * .35)) < 150 * self.scale
         just_approached = near and not self._cursor_near
+        # 法阵感应光标:按距离平滑升温/降温。只在她醒着、站着不演出时算,
+        # 其余时候归零 —— 演出有自己的法阵能量
+        if self.state in ("idle", "sticker") and not self.drag:
+            target = self._prox_target(
+                math.hypot(mx - wcx, my - (self.fy - self.H * .35)) / self.scale)
+        else:
+            target = 0.0
+        self._prox = approach(getattr(self, "_prox", 0.0), target, 0.12, dts)
+        if just_approached and self.state == "idle":
+            self._ripple_kick = now
         self._cursor_near = near
         if getattr(self, "_look_away_cd", 0) > now:
             tx = math.sin(t * 1.8) * 0.9
@@ -5340,7 +5688,7 @@ class Pet:
             # 专注期间不主动搭话;把下次时间推到这段结束之后,免得一收工
             # 就立刻蹦一句出来(那比中途说话更突兀)
             self.next_greet = max(self.next_greet, self.pomo["due"] + 60)
-        elif (self.brain and self.brain.available
+        elif (self._ai_ready()
                 and self.state in ("idle", "sticker")
                 and now > self.next_greet):
             g = self.brain.cfg.get("greet_interval_min", 0)
@@ -5375,6 +5723,7 @@ class Pet:
                 self.confetti_burst(0, -0.15, 20)
                 self.add_affection(2)   # 陪你完成一段专注,感情自然升温
                 self.pomo_done += 1
+                self._count_today("focus_min", int(round(p["mins"])))
                 milestone = {1: "初次专注", 5: "专注学徒", 10: "专注达人",
                              25: "专注大师"}.get(self.pomo_done)
                 extra = (f"获得称号【{milestone}】!" if milestone
@@ -5393,6 +5742,8 @@ class Pet:
 
         # 偷看窗口:同一类应用用太久就念叨一次
         self._fg_watch_tick(now)
+        self._battery_tick(now)
+        self._stats_tick(now)
 
         if now >= self.next_blink and self.state not in ("sleep", "yawn"):
             self.blink_until = now + 0.12
@@ -5546,6 +5897,26 @@ class Pet:
                 self.next_event = now + random.uniform(6, 12)
         elif st == "flip":
             self._advance_flip(now)
+        elif st == "meditate":
+            t2 = now - self.meditate_start
+            self._play_timeline(t2, self._tl_tracks, self._tl_events, self._tl_done)
+            if 1.2 < t2 < 4.3:
+                # 悬停时的呼吸起伏叠加在升空高度上
+                self._spin_lift += math.sin((t2 - 1.2) * 2.4) * 3.0 * self.scale
+            if 0.8 < t2 < 4.9 and now > self.next_trail:
+                # 腰间三股星尘绕行,跟着升空高度走
+                self.next_trail = now + 0.05
+                for x, y, side, a in self._meditate_arms(t2, self.W, self.H,
+                                                         self._spin_lift):
+                    # 尾迹在远侧缩小一圈:粒子没法画到她身后,只能靠近大远小
+                    near = side == "near"
+                    self.add_part("sparkle", x, y, life=0.7,
+                                  size=random.uniform(5.5, 9) * (1.0 if near else 0.6),
+                                  color=random.choice(STAR_COLORS), phase=a)
+            if now > self.state_until:
+                self._spin_lift = 0.0
+                self.state = "idle"
+                self.next_event = now + random.uniform(6, 12)
         elif st == "wave":
             t = now - self.wave_start
             self._play_timeline(t, self._tl_tracks, self._tl_events, self._tl_done)
@@ -5606,12 +5977,28 @@ class Pet:
                 self.bounces += 1
                 self.hit_wall()
             if now > self.next_trail:
-                self.next_trail = now + 0.03
-                self.add_part("star", random.uniform(-0.1, 0.1) * self.W,
-                              -0.2 * self.H, life=0.7,
-                              size=random.uniform(4, 8),
-                              color=random.choice(STAR_COLORS),
-                              phase=random.uniform(0, 6.28), spin=6.0)
+                # 窗口本身在跟着她飞,而粒子坐标是相对窗口的:原来的星星一直
+                # 挂在她头顶跟着走,根本不是"拖尾"。给星星和窗口相反的速度、
+                # 相反的重力,它们在屏幕上就停在原地,被真正甩在身后。
+                # 飞得快时一颗星 0.2 秒就出了窗口,所以发得更密、从身体发出
+                # (同屏粒子数反而比原来少:寿命 0.7 -> 0.45)。
+                self.next_trail = now + 0.015
+                # 一帧里窗口可能走了几十像素(30fps、1300px/s 时约 43px),只在
+                # 当前位置撒一颗,拖尾就成了稀疏的点线。按这一帧走过的路程
+                # 沿路补几颗:u 越大越靠后(窗口坐标里往反方向挪)。
+                n = max(1, min(4, int(math.hypot(self.vx, self.vy) * dt
+                                      / (18 * self.scale))))
+                for j in range(n):
+                    u = j / n
+                    self.add_part("star",
+                                  random.uniform(-0.08, 0.08) * self.W - self.vx * dt * u,
+                                  random.uniform(-0.22, 0.02) * self.H - self.vy * dt * u,
+                                  life=0.45,
+                                  vx=-self.vx + random.uniform(-25, 25),
+                                  vy=-self.vy + random.uniform(-25, 25), grav=-1500,
+                                  size=random.uniform(4, 8),
+                                  color=random.choice(STAR_COLORS),
+                                  phase=random.uniform(0, 6.28), spin=6.0)
             if self.fy >= self.ground_feet:
                 self.fy = float(self.ground_feet)
                 if abs(self.vy) > 260 and self.bounces < 4:
@@ -5631,6 +6018,19 @@ class Pet:
                         self.go_dizzy()
         elif st == "dizzy":
             self._advance_dizzy(now)
+            # 头顶转圈的小星星:开场那 6 颗是向外飞散的,1 秒后就没了,后半段
+            # 她只是站着晃。这里补一圈绕着头转的,跟着晕眩程度一起淡出。
+            if self.dizzy_amp > 0.18 and now > self.next_trail:
+                self.next_trail = now + 0.07
+                a = t * 4.2
+                # 绕的是头顶,所以锚点跟开场那 6 颗星一个高度(-0.25H);挂在
+                # -0.42H 会飘到气泡那儿去,看着不像绕着她转。x 再跟一点她的
+                # 倾斜,头歪过去这圈星星也跟着歪。
+                self.add_part("star",
+                              math.cos(a) * 0.24 * self.W + self.lean * self.H * 0.35,
+                              -0.28 * self.H + math.sin(a) * 0.055 * self.H,
+                              life=0.5, size=(7.0 + 3.0 * self.dizzy_amp) * self.scale,
+                              color=GOLD_L, phase=a, spin=5.0)
         elif st == "walk":
             step = SPEED * self.scale * dt
             if abs(self.walk_target - self.x) <= step:
@@ -5639,13 +6039,31 @@ class Pet:
                 self.next_event = now + random.uniform(6, 14)
             else:
                 self.x += step if self.walk_target > self.x else -step
-            if now > self.next_trail:
-                self.next_trail = now + 0.35
-                self.add_part("sparkle", -self.face * 0.22 * self.W,
-                              (self.FOOT_Y + 14) - self.H / 2 + random.uniform(-12, 12),
-                              life=0.6, size=random.uniform(3, 6),
-                              color=random.choice([MAGIC_A, MAGIC_B, WHITE]),
-                              phase=random.uniform(0, 6.28))
+            # 步态:按真实走过的距离推进步相(整数处落脚)。起伏、前倾和脚下
+            # 星尘都踩在同一个步点上 —— 原来起伏按全局时钟算、星尘固定 0.35 秒
+            # 一颗,和实际移动脱节,看起来像被拖着平移。
+            prev_phase = self._walk_phase
+            self._walk_phase += step / (26.0 * self.scale)
+            self.lean += (self.face * 0.04 - self.lean) * 0.15
+            if int(self._walk_phase) != int(prev_phase):
+                # 落脚这一下:轻轻踩实(squash 每帧自己回弹)、落点压出一圈
+                # 扁光环、尘星往身后扬。光环走粒子而不是 self.circles —— 后者
+                # 恒定画在身体正中,和常驻的地面法阵重叠,等于没画;粒子能落在
+                # 真正的落脚点上,左右脚交替就看得出来了。尘星也甩到法阵外圈,
+                # 不再混进法阵自带的星点里。
+                foot = 0.11 if int(self._walk_phase) % 2 else -0.06
+                ground = (self.FOOT_Y + 8 * self.scale) - self.H / 2
+                self.squash = min(self.squash, 0.955)
+                self._step_flash = now
+                for _ in range(random.randint(2, 3)):
+                    self.add_part("sparkle", (foot - self.face * 0.03) * self.W
+                                  + random.uniform(-5, 5),
+                                  ground - 6 + random.uniform(-4, 2),
+                                  vx=-self.face * random.uniform(34, 78),
+                                  vy=-random.uniform(26, 48), grav=130,
+                                  life=0.55, size=random.uniform(5, 8.5),
+                                  color=random.choice([GOLD_L, WHITE]),
+                                  phase=random.uniform(0, 6.28))
             if now > self.state_until:
                 self.state = "idle"
                 self.next_event = now + random.uniform(6, 14)
@@ -5699,10 +6117,38 @@ class Pet:
                 self.state = "idle"
                 self.next_event = now + random.uniform(8, 16)
         elif st == "eat":
-            self.squash, self._bend = self._eat_pose(now - self.eat_start)
+            age = now - self.eat_start
+            self.squash, self._bend = self._eat_pose(age)
+            # 糖果 1.1 秒进嘴后到结算之间原来什么都不发生,连拍看就是站着。
+            # 进嘴那下迸一小撮金屑,之后每口嚼(对上 _eat_pose 的压扁拍)
+            # 从嘴角崩两粒往下掉 —— 节拍用集合记,掉帧也不会重放或漏掉。
+            mx, my = getattr(self, "_mouth_xy", (self.W * .49, self.H * .42))
+            beats = getattr(self, "_eat_beats", set())
+            for i, bt in enumerate((1.1, 1.24, 1.52, 1.8)):
+                if age >= bt and i not in beats:
+                    beats.add(i)
+                    first = i == 0
+                    for _ in range(5 if first else 2):
+                        side = random.choice((-1, 1))
+                        self.add_part("sparkle",
+                                      mx - self.W / 2 + side * random.uniform(4, 10) * self.scale,
+                                      my - self.H / 2 + random.uniform(-2, 3),
+                                      # 往两侧甩出脸的轮廓:落在白领口/脸上
+                                      # 的浅色碎屑完全没有对比,看不见。
+                                      vx=side * random.uniform(*((75, 135) if first
+                                                                 else (55, 95))),
+                                      vy=-random.uniform(*((55, 105) if first
+                                                           else (35, 60))),
+                                      grav=240, life=.55 if first else .48,
+                                      size=random.uniform(6.5, 9.5) if first
+                                      else random.uniform(5.0, 7.0),
+                                      color=random.choice((GOLD, GOLD_L)),
+                                      phase=random.uniform(0, 6.28))
+            self._eat_beats = beats
             if now > self.state_until:
-                gained = min(40.0, 100.0 - self.star)
-                self.star = min(100.0, self.star + 40)
+                gained = self.gain_star(40)
+                mx, my = getattr(self, "_mouth_xy", (self.W * .49, self.H * .42))
+                self.hit_ring(mx - self.W / 2, my - self.H / 2)
                 self.star_burst(0, -0.1, 8, sp=(60, 130), grav=100)
                 self.hearts(0, -0.15, 3)
                 self.play_emotion("thanks", 2.4)
@@ -5851,7 +6297,13 @@ class Pet:
                     self.say(f"接住了 {got} 颗~", 2.2)
                 self._catch_total = 0
         if self.hop_t > 0:
+            total = getattr(self, "_hop_total", self.hop_t)
+            prev_age = total - self.hop_t
             self.hop_t = max(0.0, self.hop_t - dt)
+            if self._hop_touchdown(prev_age, total - self.hop_t, total):
+                # 每次触地压扁一下(squash 每帧自己回弹到 1)。压到 0.93 只
+                # 跨一个变形缓存档,整段蹦跳最多多出两张网格,不会连续未命中。
+                self.squash = min(self.squash, 0.93)
         if self.sticker and now - self.sticker["born"] > self.sticker["life"]:
             self.sticker = None
         if self._sticker_previous and (not self.sticker or now-self._sticker_previous[1] >= .18):
@@ -6002,8 +6454,22 @@ class Pet:
             return self._castfx
 
     def _warm_fx(self):
-        """后台预热大招精灵。全程只碰 PIL 不碰 Tk,放线程里安全。"""
-        threading.Thread(target=self.cast_fx, daemon=True).start()
+        """后台预热大招精灵和飘字字形。全程只碰 PIL 不碰 Tk,放线程里安全。
+
+        字形放这里而不是跟着 FX 同步建:11 个带柔光的字形约 40ms,同步建会
+        再拖慢一次启动首帧。没建好之前 gain_text 什么都不画,开机头几秒
+        喂糖只是少一行飘字。"""
+        layer = self.fx
+
+        def work():
+            self.cast_fx()
+            try:
+                if getattr(layer, "gain", None) is None:
+                    layer.build_gain_glyphs(load_font(int(17 * layer.scale * SS)))
+            except Exception:
+                self._log_exc("warm_fx 飘字字形")
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _spr_top(self):
         return self.fy - self._spr_disp_h() + 6
@@ -6026,11 +6492,12 @@ class Pet:
         bob = (-1.75 + 1.75 * math.sin(t * breath_rate)
                + .6 * math.sin(t * .73)) * self.scale
         if self.state == "walk":
-            bob = -abs(math.sin(t * 5)) * 5.5 * self.scale
+            bob = -abs(math.sin(self._walk_phase * math.pi)) * 5.5 * self.scale
         if happy:
-            # 弹跳高度随剩余力度衰减:hop(1.0) 能蹦到 ~15px*scale,
-            # hop(0.4) 只有 ~9px —— 蹦得越高落得越柔,动画感更强
-            bob = -abs(math.sin(t * 16)) * (5 + self.hop_t * 10) * self.scale
+            # 呼吸浮动不停,小跳叠在它上面:起跳和落地都接得上,不会跳变
+            total = getattr(self, "_hop_total", self.hop_t)
+            bob -= self._hop_curve(total - self.hop_t, total,
+                                   getattr(self, "_hop_amp", self.hop_t)) * self.scale
 
         # 复用同一块画布:每帧新建再丢掉一个 8MB 的 RGBA,一秒 30 次,
         # 分配器的压力远大于直接清空(实测 1.32ms vs 0.38ms)。
@@ -6063,9 +6530,28 @@ class Pet:
             elif self.state == "dance":
                 energy = max(0.0, 1.0 - ((now - self.dance_start)
                                          % getattr(self, "dance_beat", 0.42)) / 0.2) * 0.7
+            elif self.state == "walk":
+                # 每次落脚法阵亮一下、转速顶一下 —— 比在法阵里再画一圈小光环
+                # 管用得多:那圈细线正好和常驻法阵重叠,等于没画。
+                energy = max(0.0, 1.0 - (now - self._step_flash) / 0.18) * 0.38
             elif now < getattr(self, "_starform_until", 0):
                 energy = 0.35
-            self.fx.ground_circle(frame, d, cx2, circ_y * k, now - self.t0, energy=energy)
+            # 光标靠近时法阵"醒过来":五芒星变亮、符文转快。只抬不压,
+            # 演出本身的能量更高时以演出为准
+            energy = max(energy, 0.5 * getattr(self, "_prox", 0.0))
+            # 呼吸光跟她的浮动同相:浮到高处时脚下最亮,像是法阵在托着她。
+            # 原来光垫亮度是死的,待机时法阵只有符文在匀速转。
+            self.fx.ground_circle(frame, d, cx2, circ_y * k, now - self.t0, energy=energy,
+                                  breath=0.5 - 0.5 * math.sin(t * breath_rate))
+            if not casting:
+                # 每 5.2 秒从金色内圈荡出一道光纹,1.8 秒走到外圈。按全局时钟
+                # 算而不存状态:没有要复位的东西,掉帧也不会叠出好几道。
+                self.fx.ground_ripple(frame, cx2, circ_y * k,
+                                      (t % RIPPLE_PERIOD) / RIPPLE_TRAVEL)
+                # 光标刚靠近:额外荡一道"欢迎"光纹,和周期光纹各走各的
+                self.fx.ground_ripple(frame, cx2, circ_y * k,
+                                      (now - getattr(self, "_ripple_kick", -99.0))
+                                      / RIPPLE_TRAVEL)
         # 冬季积雪:雪花落地后脚下慢慢积出一圈软白雪,停止下雪会融化
         mon = self._now_local().tm_mon
         if self._season(mon) == "winter" and self.snow_ground > 0.02:
@@ -6149,7 +6635,12 @@ class Pet:
         if self.state == "transform":
             transform_ribbons(d, cx2, feet2, self.spr2.width, self.spr2.height,
                                  now - self.transform_start, k, front=False)
+        meditating = self.state == "meditate"
+        if meditating:
+            self._draw_meditate_orbs(frame, now, k, "far")
         frame.alpha_composite(sprite, (paste_x, paste_y))
+        if meditating:
+            self._draw_meditate_orbs(frame, now, k, "near")
         if self.state == "transform":
             transform_ribbons(d, cx2, feet2, self.spr2.width, self.spr2.height,
                                  now - self.transform_start, k, front=True)
@@ -6228,6 +6719,9 @@ class Pet:
 
         if eating:
             age = now - self.eat_start
+            # 嘴的位置记下来(画布像素):状态机在咀嚼拍上从这里崩糖屑。
+            self._mouth_xy = (spr_left + spr_w1 * .487,
+                              spr_top1 + sprite.height / k * .55)
             # 轨迹与糖果共用一条曲线,不依赖帧率积累粒子。
             for i in range(5, -1, -1):
                 sample_age = age - i * .045
@@ -6250,7 +6744,7 @@ class Pet:
                 for side in (-1, 1):
                     cx = (spr_left + spr_w1*(.487+side*.14)) * k
                     cy = (spr_top1 + sprite.height/k*.56) * k
-                    r = (3 + 2*glint)*self.scale*k
+                    r = (4.5 + 3*glint)*self.scale*k
                     d.polygon(star_pts(cx, cy, r, r*.3, rot=.2), fill=GOLD_L+(int(210*glint),))
 
         # 时之魔法演出(时停/回溯):fx 预渲染叠加层,pet.py 侧只留这一个钩子
@@ -6295,7 +6789,14 @@ class Pet:
             py = (p["y"]) * k + p["vy"] * age * k + 0.5 * p["grav"] * age * age * k
             px += p["vx"] * age * k
             col = p["color"]
-            if p["kind"] == "heart":
+            if p["kind"] == "gain":
+                # 前 0.12 秒淡入,末 40% 淡出;字形全是预渲染贴图,只排版不画字
+                vis = min(1.0, age / 0.12, (1.0 - kk) / 0.4)
+                self.fx.gain_text(frame, px, py, p.get("txt") or "", vis)
+            elif p["kind"] == "hit_ring":
+                # 不跟随 vx/vy:光环钉在点中的那个位置上
+                self.fx.hit_ring(frame, p["x"] * k, p["y"] * k, kk, p.get("txt") or "gold")
+            elif p["kind"] == "heart":
                 s = p["size"] * (1 - kk * 0.45) * k
                 sway = math.sin(p["phase"] + age * 5) * 8
                 a2 = int(255 * (1 - kk * 0.7))
@@ -6527,13 +7028,18 @@ class Pet:
 
         # 整数倍降采样用 reduce():精确 2x2 均值,正是超采样该有的解析方式。
         # 实测 1290x1560 -> 645x780,BILINEAR 约 23ms,reduce(2) 约 7.5ms。
+        # 在预乘模式(RGBa)下降采样:reduce 对 RGBA 内部本来就要先预乘、缩完
+        # 再还原,推帧时又得再预乘一次。直接在 RGBa 里缩,缩完的字节就是
+        # UpdateLayeredWindow 要的预乘数据,省掉"还原 + 再预乘"两趟整帧转换
+        # (实测 1290x1560 源帧:10.0ms -> 6.7ms,误差 <=1 级舍入)。在预乘域
+        # 求均值也正是半透明边缘该有的合成方式。
         if frame.width == W * SS and frame.height == H * SS:
-            small = frame.reduce(SS)
+            small = frame.convert("RGBa").reduce(SS)
         else:
             small = frame.resize((W, H), Image.BILINEAR)
         if self.selftest and now - self.t0 > 1.6 and not self.snap_done:
             self.snap_done = True
-            small.save(os.path.join(HERE, "_preview_idle.png"))
+            small.convert("RGBA").save(os.path.join(HERE, "_preview_idle.png"))
         # 只推与窗口物理尺寸一致的这一帧;
         # 再推一次 SS 倍的超采样帧会把分层窗口撑成 2 倍大。
         self._push(small)
@@ -6676,8 +7182,38 @@ class Pet:
             d.polygon(star_pts(mx * k, my * k, r, r * 0.42, rot=rot),
                       fill=GOLD + (255,), outline=(200, 149, 48, 255))
 
+    @staticmethod
+    def _meditate_arms(t2, W, H, lift):
+        """冥想三股星尘此刻的头部位置(相对窗口中心)与远近。tick 里撒尾迹
+        和 render 里画星核共用这一份,两边永远对得上。"""
+        arms = []
+        for arm in range(3):
+            a = t2 * 2.6 + arm * 2.0944
+            # sin(a) > 0 是椭圆靠观众的下半圈(近侧)
+            arms.append((math.cos(a) * 0.30 * W,
+                         math.sin(a) * 0.30 * W * 0.26 - 0.02 * H - lift,
+                         "near" if math.sin(a) > 0 else "far", a))
+        return arms
+
+    @staticmethod
+    def _meditate_orb_vis(t2):
+        """星核淡入淡出:跟着尾迹的起止(0.8~4.9 秒)各留一小段过渡。"""
+        return max(0.0, min(1.0, (t2 - 0.8) / 0.4, (4.9 - t2) / 0.5))
+
+    def _draw_meditate_orbs(self, frame, now, k, side):
+        """原来三股星尘全是平贴的 sparkle,永远画在她身前,看不出是"绕着"
+        她转。每股的头部加一颗星核:远侧的小而暗、画在立绘之前(被她挡住),
+        近侧的大而亮、画在立绘之后。"""
+        t2 = now - self.meditate_start
+        vis = self._meditate_orb_vis(t2)
+        if vis <= 0:
+            return
+        for x, y, arm_side, _ in self._meditate_arms(t2, self.W, self.H, self._spin_lift):
+            if arm_side == side:
+                self.fx.orb(frame, (self.W / 2 + x) * k, (self.H / 2 + y) * k, side, vis)
+
     def _draw_decors(self, frame, d, t, layer, dy, k):
-        W, H = self.W, self.H
+        W = self.W
         spr_w1 = self.spr2.width / SS
         spr_h1 = self._spr_disp_h()
         center_rel = float(self.cfg.get("char_center_rel", 0.44))
@@ -6815,7 +7351,7 @@ class Pet:
             # 淡出是逐帧变的,必须先复制 —— 直接 putalpha 会把缓存里那张改掉
             im2 = im2.copy()
             im2.putalpha(im2.getchannel("A").point(lambda v: v * alpha // 255))
-        tw1, th1 = tw / k, th / k
+        tw1 = tw / k
         if spr_left + spr_w1 + tw1 * 0.8 < self.W - 8:
             sx = int((spr_left + spr_w1 - tw1 * 0.25) * k)
         else:
@@ -6978,7 +7514,7 @@ class InteractionCard:
         cv.create_rectangle(18*u,99*u,302*u,104*u,fill=UI_FIELD,outline='')
         self.energy = cv.create_rectangle(18*u,99*u,18*u,104*u,fill=UI_GOLD,outline='')
         self._hint_key = None
-        self.hint = cv.create_text(18*u,128*u,anchor='w',text='一起度过这会儿',font=ui_font(11,u),fill=UI_TEXT_DIM)
+        self.hint = cv.create_text(18*u,128*u,anchor='w',text=self._default_hint(),font=ui_font(11,u),fill=UI_TEXT_DIM)
         grid = tk.Frame(win, bg=UI_PANEL)
         cv.create_window(16*u,146*u,anchor='nw',window=grid,width=288*u,height=170*u)
         grid.columnconfigure((0,1), weight=1, uniform='actions')
@@ -6990,7 +7526,7 @@ class InteractionCard:
             grid.rowconfigure(i//2, weight=1, uniform='actions')
             button = self._button(grid, label, lambda fn=action,key=label: self._run(fn,key))
             button.bind('<Enter>',lambda e,key=label:self._show_hint(key),add='+')
-            button.bind('<FocusIn>',lambda e,key=label:self._show_hint(key))
+            button.bind('<FocusIn>',lambda e,key=label:self._focus_hint(key))
             button.bind('<Leave>',lambda e:self._show_hint(None),add='+')
             button.grid(row=i//2,column=i%2,sticky='nsew',padx=3*u,pady=4*u)
             self.buttons[label] = button
@@ -7004,6 +7540,9 @@ class InteractionCard:
         self._refresh()
         win.deiconify()
         win.lift()
+        # 打开时程序自动把焦点给「聊天」,这一下别用按钮说明盖掉今日小结
+        self._auto_focus = True
+        self._auto_focus_id = win.after(250, self._end_auto_focus)
         self.buttons['聊天'].focus_force()
 
     def _button(self, parent, text, action):
@@ -7032,12 +7571,26 @@ class InteractionCard:
         self._show_hint(self._hint_key)
         self._refresh_id = self.win.after(400, self._refresh)
 
+    def _focus_hint(self, key):
+        """Tab 切焦点时显示按钮说明;打开卡片瞬间的程序自动聚焦除外。"""
+        if getattr(self, '_auto_focus', False):
+            return
+        self._show_hint(key)
+
+    def _end_auto_focus(self):
+        self._auto_focus = False
+
+    def _default_hint(self):
+        """没悬停按钮时显示今天的陪伴小结(最多三项,卡片放不下更多)。"""
+        s = self.pet._today_summary(limit=3)
+        return f'今天 · {s}' if s else '一起度过这会儿'
+
     def _show_hint(self, key):
         if self.closed:
             return
         self._hint_key = key
         reason = self.disabled_reasons(self.pet).get(key)
-        hint = self.HINTS.get(key,'一起度过这会儿')
+        hint = self.HINTS.get(key, self._default_hint())
         if key=='睡觉' and self.pet.state in ('sleep','yawn'):
             hint = '轻轻叫醒，等她慢慢回过神'
         self.cv.itemconfigure(self.hint,text=reason or hint,fill=UI_GOLD if reason else UI_TEXT_DIM)
@@ -7078,7 +7631,10 @@ class InteractionCard:
         if self.closed:
             return
         self.closed = True
-        for timer in (self._refresh_id, self._focus_id):
+        # 自动聚焦的 250ms 定时器也要撤:卡片 250ms 内被关掉时(测试里很常见)
+        # 它会对已销毁的窗口触发,Tcl 报 invalid command name
+        for timer in (self._refresh_id, self._focus_id,
+                      getattr(self, '_auto_focus_id', None)):
             if timer:
                 self.win.after_cancel(timer)
         if getattr(self.pet, 'action_card', None) is self:
@@ -7393,6 +7949,13 @@ class ChatBox:
 
 
 # ---------------- Win32 结构体 ----------------
+class _PowerStatus(ctypes.Structure):
+    """GetSystemPowerStatus 的 SYSTEM_POWER_STATUS。"""
+    _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                ("BatteryLifeTime", wintypes.DWORD), ("BatteryFullLifeTime", wintypes.DWORD)]
+
+
 class _Blend(ctypes.Structure):
     _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
                 ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]

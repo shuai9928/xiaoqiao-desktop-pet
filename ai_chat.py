@@ -63,15 +63,41 @@ def _load_json(path, default):
         return default
 
 
+_SAVE_WARNED = set()
+
+
+def _warn_save_failed(path, e):
+    """写盘失败每个路径只报一次:不能静默(丢的是记忆/配置),也不能刷屏。"""
+    if path not in _SAVE_WARNED:
+        _SAVE_WARNED.add(path)
+        print(f"[ai_chat] 保存 {path} 失败: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+
+
+def _atomic_dump(path, data):
+    """先写 .tmp 再 os.replace。原来直接 open("w") 覆盖:写到一半进程被杀、
+    磁盘满或数据里混进不可序列化的值,原文件就被截断成半截 JSON。"""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _save_json(path, data):
     try:
         d = os.path.dirname(path)
         if d:                    # 相对路径没有目录部分,makedirs("") 会炸
             os.makedirs(d, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=1)
-    except Exception:
-        pass
+        _atomic_dump(path, data)
+    except Exception as e:
+        _warn_save_failed(path, e)
 
 
 # ---------------- 人格默认值 ----------------
@@ -502,10 +528,9 @@ class AIBrain:
             existing = _load_json(self.path, {})
             existing["greet_interval_min"] = self.cfg.get("greet_interval_min", 30)
             existing["model"] = self.cfg.get("model", "gemini-flash-lite-latest")
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, ensure_ascii=False, indent=1)
-        except Exception:
-            pass
+            _atomic_dump(self.path, existing)   # 这份文件里有加密后的 API 密钥
+        except Exception as e:
+            _warn_save_failed(self.path, e)
 
     def save_key(self, key):
         """写入 API 密钥并让客户端下次重建。save() 故意不碰 api_key,
@@ -546,6 +571,19 @@ class AIBrain:
     @property
     def available(self):
         if not (_ensure_genai() and self._enabled):
+            return False
+        return bool(self.cfg.get("api_key") or os.environ.get("GEMINI_API_KEY")
+                    or os.environ.get("GOOGLE_API_KEY"))
+
+    @property
+    def ready(self):
+        """与 available 同义,但绝不触发 import:SDK 还没加载就直接返回 False。
+
+        给每帧/被动检查用。available 首次访问会当场导入 google.genai(约 0.8
+        秒),原来第一帧 tick 的主动搭话检查就访问了它,把开机 25 秒后台预热
+        的设计抵消掉,冷启动白白多卡 0.8 秒。
+        """
+        if HAS_GENAI is not True or not self._enabled:
             return False
         return bool(self.cfg.get("api_key") or os.environ.get("GEMINI_API_KEY")
                     or os.environ.get("GOOGLE_API_KEY"))

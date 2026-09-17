@@ -5,16 +5,20 @@
     py test_pet.py            # 跑全部断言,输出 PASS/FAIL 汇总
 注意:
     会短暂在屏幕上创建一只测试小乔(约 20 秒),跑完自动关闭;
-    会强制静音测试实例;会使用真实的 pet_settings.json 读取设置,
-    但测试中产生的写盘行为集中在临时目录(除 rps 战绩等少量字段)。
+    会强制静音测试实例;启动时把真实 pet_settings.json 复制进临时沙箱,
+    存档/提醒/聊天记录/TTS 缓存全部写到沙箱,结束时校验真实文件哈希未变。
+    (曾经直接写真实存档:好感度 129.5 被冲成 12.4、陪伴天数被重置、
+    猜拳战绩被刷成 29胜2平8负。)
 覆盖:
     JSON 类型防线 / 指令通道竞态 / SFX 限频与开关 / 星光养成闭环 /
     被冷落撒娇 / 连摸彩蛋 / 久别重逢 / 猜拳加固 / 空中吃糖拒绝 /
     重力兜底 / say 文本归一化 / PS 转义
 """
+import hashlib
 import json
 import os
 import random
+import shutil
 import sys
 import tempfile
 import time
@@ -42,6 +46,33 @@ class FakeChat:
 
 
 RESULTS = []
+_REAL_HASHES = {}      # 真实运行文件 -> 测试开始时的 sha256
+
+
+def _sha(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _sandbox_runtime_files():
+    """把会写盘的运行文件全部指到临时目录。
+
+    不改 pet.HERE:pet.py 用它拼开机自启命令,改了可能把注册表 Run 项写坏。
+    ASSETS 在 import 时已算好,素材照常从真实目录读。
+    """
+    sandbox = tempfile.mkdtemp(prefix="xiaoqiao_test_")
+    real_chat = os.path.join(pet.HERE, "chat_history.json")
+    for f in (pet.CONFIG_FILE, pet.REMINDERS_FILE, real_chat):
+        _REAL_HASHES[f] = _sha(f)
+    if os.path.exists(pet.CONFIG_FILE):
+        shutil.copy2(pet.CONFIG_FILE, os.path.join(sandbox, "pet_settings.json"))
+    pet.CONFIG_FILE = os.path.join(sandbox, "pet_settings.json")
+    pet.REMINDERS_FILE = os.path.join(sandbox, "pet_reminders.json")
+    pet.TTS_CACHE = os.path.join(sandbox, "_tts_cache")
+    return sandbox
 
 
 def check(name, cond):
@@ -55,9 +86,12 @@ def check(name, cond):
 
 
 def main():
+    sandbox = _sandbox_runtime_files()   # 必须在构造 Pet 之前
     root = tk.Tk()
     # 不 withdraw:重力/下落测试需要完整的 tick 渲染管线在跑
     p = pet.Pet(root)
+    p.chat_path = os.path.join(sandbox, "chat_history.json")
+    p.state_path = os.path.join(sandbox, "pet_state.json")
     try:
         return _run(p, root)
     except Exception:                 # 用例自身抛异常(不是断言失败)
@@ -67,6 +101,8 @@ def main():
 
 
 def _finish(p):
+    changed = [os.path.basename(f) for f, h in _REAL_HASHES.items() if _sha(f) != h]
+    check(f"隔离: 真实存档/提醒/聊天记录未被测试改动 {changed or ''}", not changed)
     bad = [r for r in RESULTS if not r.startswith("PASS")]
     print("\n".join(RESULTS))
     print(f"{len(RESULTS) - len(bad)}/{len(RESULTS)} 通过")
@@ -84,6 +120,12 @@ def _finish(p):
 def _run(p, root=None):
     p.sfx.enabled = False          # 测试全程静音
     p.brain = None                 # 排除 AI 插话的不确定性
+
+    # ---- 0. 依赖防线:运行时不加载 numpy ----
+    # numpy 背后的 OpenBLAS 按核数预留线程缓冲,16 核机器上一 import 就多
+    # 约 490MB 提交内存。pet 本来不需要它;曾因法阵预合成误用 numpy,
+    # 私有内存从 215MB 涨到 696MB(EXPERIMENTS E15)。
+    check("依赖: 构造桌宠后没有加载 numpy", "numpy" not in sys.modules)
 
     # ---- 1. JSON 类型防线 ----
     d = tempfile.mkdtemp()
@@ -271,6 +313,24 @@ def _run(p, root=None):
     (p.state, p.parts, p.bubble, p.sticker, p.drag, p._fast_ok,
      p.hop_t, p.lean_kick, p.blink_until, p._mouth, p.singing,
      p.last_interact, pet.cursor_pos) = _save
+
+    # ---- 3.87 帧节奏补偿:间隔要扣掉本帧耗时 ----
+    # 原来是干完活再固定等 _frame_delay(),跳舞一帧画 36ms 时标称 30fps
+    # 实际只有 13fps,还会因为 dt 上限变成慢动作
+    with patch.object(p, "_frame_delay", return_value=50):
+        check("帧节奏: 下一帧间隔扣掉本帧耗时", p._paced_delay(20.0) == 30)
+        check("帧节奏: 画超时也至少留 4ms 给事件", p._paced_delay(80.0) == 4)
+
+    # ---- 3.88 全屏魔法三圈错峰 ----
+    # 每圈出生时间原来算好了却没传给粒子,三圈同一瞬间炸开
+    _saved_parts, _saved_ms = list(p.parts), p.magic_start
+    p.parts = []
+    p.magic_start = time.time()
+    p._magic_fullscreen_burst()
+    _offs = sorted({round(q["born"] - p.magic_start, 2)
+                    for q in p.parts if q["kind"] == "magic_burst"})
+    check(f"全屏魔法: 三圈错峰出场 {_offs}", _offs == [0.0, 0.08, 0.16])
+    p.parts, p.magic_start = _saved_parts, _saved_ms
 
     # ---- 3.8 粒子尾淡 ----
     check("尾淡: 前段不衰减", pet.tail_fade(0.5) == 1.0)
@@ -645,6 +705,380 @@ def _run(p, root=None):
           "我在写爬虫" not in _mem.relevant("今天天气怎么样", 2))
     if os.path.exists(_mem_path):
         os.remove(_mem_path)
+
+    # ---- 14b. 记忆/配置写入失败不能截断原文件 ----
+    # 原来 _save_json 直接 open("w") 覆盖:json.dump 中途抛异常(比如数据里
+    # 混进不可序列化的值),或进程被杀,memories.json 就剩半截,长期记忆整份丢
+    _atom = os.path.join(tempfile.mkdtemp(), "mem.json")
+    _aic._save_json(_atom, {"facts": ["我养了只猫"]})
+    import contextlib as _ctx, io as _io
+    with _ctx.redirect_stderr(_io.StringIO()) as _err:
+        _aic._save_json(_atom, {"facts": ["新的", object()]})
+    try:
+        _atom_ok = json.load(open(_atom, encoding="utf-8")) == {"facts": ["我养了只猫"]}
+    except Exception:
+        _atom_ok = False
+    check("记忆: 写入中途失败,原文件保持完好", _atom_ok)
+    check("记忆: 写入失败留下日志且不残留 .tmp",
+          "[ai_chat]" in _err.getvalue() and not os.path.exists(_atom + ".tmp"))
+
+    # ---- 15. 缩放时坐标是浮点也不炸 ----
+    # 走路/被抛之后 self.x 是浮点,原来 set_scale 直接塞进 geometry,
+    # Tk 报 bad geometry specifier,缩放设置也没保存
+    _old_scale, _old_x = p.scale, p.x
+    p.x = float(p.x_min) + 0.7
+    _err = None
+    try:
+        p.set_scale(_old_scale + 0.25 if _old_scale < 1.5 else _old_scale - 0.25)
+    except Exception as _e:
+        _err = f"{type(_e).__name__}: {_e}"
+    _saved = json.load(open(pet.CONFIG_FILE, encoding="utf-8")).get("scale")
+    check(f"缩放: 浮点坐标下 set_scale 不抛异常 {_err or ''}", _err is None)
+    check("缩放: 新比例已写入(沙箱)存档", abs((_saved or 0) - p.scale) < 1e-6)
+    p.set_scale(_old_scale)
+    p.x = _old_x
+
+    # ---- 16. 卸载确认:只有点「指给我看」才会去找卸载程序 ----
+    # 绝不拿真实已安装软件测:确认框和 run_uninstaller 都打桩
+    _calls = []
+    _fake = lambda c: (_calls.append(c), True)[1]
+    with patch.object(p, "themed_confirm", return_value=False),             patch.object(agent, "run_uninstaller", side_effect=_fake):
+        p._finish_agent(("confirm", ("假软件", "C:/nope/uninst.exe")))
+    check("卸载确认: 选「算了」不会调用卸载程序", _calls == [])
+    with patch.object(p, "themed_confirm", return_value=True),             patch.object(agent, "run_uninstaller", side_effect=_fake):
+        p._finish_agent(("confirm", ("假软件", "C:/nope/uninst.exe")))
+    check("卸载确认: 选「指给我看」才调用一次", _calls == ["C:/nope/uninst.exe"])
+
+    # ---- 17. 电量事件判定(纯函数,不依赖本机有没有电池)----
+    _be = pet.Pet._battery_event
+    check("电量: 首次采样不触发", _be(None, (True, 80)) is None)
+    check("电量: 插上电源", _be((False, 50), (True, 50)) == "plug")
+    check("电量: 拔掉电源", _be((True, 50), (False, 50)) == "unplug")
+    check("电量: 跌破 20% 只报一次",
+          _be((False, 21), (False, 20)) == "low" and _be((False, 20), (False, 19)) is None)
+    check("电量: 跌破 10% 报紧急", _be((False, 11), (False, 9)) == "critical")
+    check("电量: 充满", _be((True, 99), (True, 100)) == "full")
+    check("电量: 台式机无电池不报", _be((True, 100), None) is None)
+
+    # ---- 18. 今日计数:跨天自动清零 + 小结文案 ----
+    _saved_ts = p.settings.get("today_stats")
+    p.settings["today_stats"] = {"date": "2000-01-01", "pet": 99}
+    p._count_today("pet")
+    p._count_today("focus_min", 25)
+    _ts = p.settings["today_stats"]
+    check("今日: 跨天后清零重新计数",
+          _ts.get("pet") == 1 and _ts.get("date") != "2000-01-01")
+    _sum = p._today_summary()
+    check(f"今日: 小结文案 {_sum}", "摸头 1 次" in _sum and "专注 25 分钟" in _sum)
+    check("今日: 卡片只取前 N 项", p._today_summary(limit=1) == "摸头 1 次")
+    if _saved_ts is None:
+        p.settings.pop("today_stats", None)
+    else:
+        p.settings["today_stats"] = _saved_ts
+
+    # ---- 19. 浮空冥想:能进入,到点落回地面 ----
+    _st_save, _drag_save = p.state, p.drag
+    p.state, p.drag = "idle", None
+    p.start_meditate()
+    check("冥想: 进入 meditate 且吃 60fps 档",
+          p.state == "meditate" and "meditate" in pet.FAST_STATES)
+    p.meditate_start -= 10
+    p.state_until -= 10
+    p._tick_body()
+    check("冥想: 到点回到 idle 且升空归零", p.state == "idle" and p._spin_lift == 0.0)
+
+    # ---- 20. 步态:步相按距离推进,跨步时洒落脚星尘 ----
+    p.state, p.face = "walk", 1
+    p.fy = float(p.ground_feet)
+    p.x = float(p.x_min) + 5
+    p.walk_target = p.x_max
+    p.state_until = time.time() + 30
+    p._walk_phase = 0.9999
+    _t_before = time.time()
+    p._tick_body()
+    # 不能比粒子总数:前面的用例攒了很多粒子,列表有上限,满了会挤掉旧的
+    _fresh = [q for q in p.parts if q["kind"] == "sparkle" and q["born"] >= _t_before]
+    check(f"步态: 跨步时洒落脚星尘(步相 {p._walk_phase:.3f},新星尘 {len(_fresh)})",
+          p._walk_phase > 1.0 and len(_fresh) >= 1)
+    # 落脚还要点亮脚下法阵(渲染侧读 _step_flash 算能量)。之前在法阵里另画
+    # 一圈小光环,正好和常驻法阵重叠，等于没画,所以改成踩亮它。
+    check("步态: 落脚同时点亮脚下法阵", p._step_flash >= _t_before)
+
+    # ---- 21. 挥手:摆幅要大到肉眼分得出来 ----
+    p.state = "idle"
+    p.fy = float(p.ground_feet)
+    p.start_wave()
+    p.wave_start -= 0.3                     # 挪到第一拍的顶点
+    p.state_until = time.time() + 5
+    p._tick_body()
+    _lean_peak, _lift_peak = abs(p.lean), p._spin_lift
+    check(f"挥手: 第一拍有明显摆幅(lean {_lean_peak:.3f} / 踮脚 {_lift_peak:.1f}px)",
+          _lean_peak > 0.08 and _lift_peak > 1.0)
+
+    # ---- 22. 晕眩:中段头顶仍有绕圈的星星(开场那 6 颗 1 秒就没了) ----
+    p.state = "idle"
+    p.fy = float(p.ground_feet)
+    p.go_dizzy()
+    p.state_until = time.time() + 2.0       # 相当于已经晕了 0.8 秒
+    p.next_trail = 0.0
+    _t_dizzy = time.time()
+    p._tick_body()
+    _orbit = [q for q in p.parts if q["kind"] == "star" and q["born"] >= _t_dizzy]
+    check(f"晕眩: 中段头顶还在转星星(新星 {len(_orbit)})", len(_orbit) >= 1)
+
+    # ---- 23. 吃糖:糖进嘴那一下迸金屑,且同一拍不重放 ----
+    p.state = "idle"
+    p.fy = float(p.ground_feet)
+    p.eat_candy()
+    p.eat_start -= 1.15                     # 刚过 1.1 秒的进嘴拍
+    _t_eat = time.time()
+    p._tick_body()
+    _crumbs = [q for q in p.parts if q["kind"] == "sparkle" and q["born"] >= _t_eat]
+    p._tick_body()
+    _again = [q for q in p.parts if q["kind"] == "sparkle" and q["born"] >= _t_eat]
+    check(f"吃糖: 进嘴迸金屑且不重放(首拍 {len(_crumbs)} / 再跑一帧 {len(_again)})",
+          len(_crumbs) >= 5 and len(_again) == len(_crumbs))
+
+    # ---- 24~27 动态感(E20~E23) ----
+    # 统一把"安静待机"的其他条件清干净,光标桩到远处:这样帧率档的变化
+    # 只可能来自被测的特效本身
+    _save_live = (p._fast_ok, p.last_interact, pet.cursor_pos, p._micro_motion,
+                  p.hop_t, p.lean_kick, p.blink_until, p._mouth, p.next_blink,
+                  getattr(p, "next_meteor", 0.0), p.squash)
+
+    def _quiet_reset():
+        p.state = "idle"
+        p.fy = float(p.ground_feet)
+        p.parts = []; p.circles = []; p._shocks = []
+        p.bubble = None; p.sticker = None; p.drag = None
+        p._micro_motion = None; p.hop_t = 0.0; p.lean_kick = 0.0
+        p.blink_until = 0.0; p._mouth = None; p.singing = False
+        p.thinking_now = False
+        # 安静档要求 4 秒没互动;但别超过 75 秒 —— 那会让下一帧 tick 直接
+        # 把她哄睡(go_sleep 还会清掉 hop_t),被测的东西全没了
+        p.last_interact = time.time() - 10
+        p.next_event = p.next_blink = p.next_meteor = time.time() + 999
+
+    def _tick_quiet():
+        """真跑一帧。tick 里与被测特效无关、却会挡安静档的偶发信号(整点问候
+        的气泡、恰好到点的眨眼)在帧后清掉,免得用例随墙钟时间偶发失败。"""
+        p.last = time.time() - 0.033
+        p._tick_body()
+        p.bubble = None
+        p.blink_until = 0.0
+
+    p._fast_ok = True
+    pet.cursor_pos = lambda: (-99999, -99999)
+
+    # 24. 命中光环:点哪亮哪;寿命内算演出,寿命到了清干净、回到安静档
+    _quiet_reset()
+    p._pet_combo = []
+    p._pet_combo_cd = time.time() + 999
+    p._last_click = (p.W * 0.55, p.H * 0.30, time.time())
+    _rand = pet.random.random
+    pet.random.random = lambda: 0.99          # 固定走普通摸头,不进随机彩蛋分支
+    try:
+        p.pet_head()
+    finally:
+        pet.random.random = _rand
+    _rings = [q for q in p.parts if q["kind"] == "hit_ring"]
+    check(f"命中光环: 摸头在点击处亮一圈粉色({len(_rings)})",
+          len(_rings) == 1 and _rings[0]["txt"] == "pink"
+          and abs(_rings[0]["x"] - p.W * 0.55) < 1 and abs(_rings[0]["y"] - p.H * 0.30) < 1)
+    _quiet_reset()
+    p._last_click = None
+    p.hit_ring(*p._click_rel(-0.27), double=True)
+    check("命中光环: 没有点击位置时落回头顶;连击两圈错开出场",
+          len(p.parts) == 2 and abs(p.parts[0]["y"] - (p.H / 2 - 0.27 * p.H)) < 1
+          and p.parts[1]["born"] > p.parts[0]["born"])
+    check("命中光环: 在场时算演出,给 60fps", p._frame_delay() == 16)
+    for _q in p.parts:
+        _q["born"] -= 5
+    _tick_quiet()
+    check("命中光环: 寿命到后清掉,回到 20fps 安静档",
+          not any(q["kind"] == "hit_ring" for q in p.parts) and p._frame_delay() == 50)
+
+    # 25. 法阵呼吸光/光纹:只在渲染里贴图,不产粒子、不动帧率档;睡着不画
+    _quiet_reset()
+    _calls = []
+    _real_gc, _real_rp = p.fx.ground_circle, p.fx.ground_ripple
+    p.fx.ground_circle = lambda *a, **k: (_calls.append(("circle", k.get("breath"))),
+                                          _real_gc(*a, **k))
+    p.fx.ground_ripple = lambda *a, **k: (_calls.append(("ripple", a[3])), _real_rp(*a, **k))
+    try:
+        _n0 = (len(p.parts), len(p.circles), len(p._shocks))
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        _br = [c[1] for c in _calls if c[0] == "circle"]
+        check(f"法阵呼吸: 待机帧给法阵传呼吸亮度并推进光纹({_br})",
+              len(_br) == 1 and _br[0] is not None and 0 <= _br[0] <= 1
+              and any(c[0] == "ripple" for c in _calls))
+        check("法阵呼吸: 不产生粒子/法阵/冲击波,安静档保持 20fps",
+              (len(p.parts), len(p.circles), len(p._shocks)) == _n0
+              and p._frame_delay() == 50)
+        _calls.clear()
+        p.state = "sleep"
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check("法阵呼吸: 睡着时法阵和光纹都不画", not _calls)
+    finally:
+        del p.fx.ground_circle, p.fx.ground_ripple
+
+    # 26. 蹦跳:整数个小跳、每次触地压扁,结束 hop_t 归零并解除"蹦跳中"
+    _quiet_reset()
+    p.squash = 1.0
+    p.hop(0.8)
+    _dips, _prev_sq, _n = 0, p.squash, 0
+    while p.hop_t > 0 and _n < 90:
+        _tick_quiet()
+        _n += 1
+        if p.squash <= 0.93 + 1e-9 < _prev_sq:
+            _dips += 1
+        _prev_sq = p.squash
+    check(f"蹦跳: 4 个小跳触地压扁 {_dips} 次,结束 hop_t 归零",
+          _dips == 4 and p.hop_t == 0)
+    for _ in range(12):
+        _tick_quiet()
+    p.last_interact = time.time() - 10
+    check(f"蹦跳: 落地后 squash 回弹到 1({p.squash:.3f})且不再挡安静档",
+          abs(p.squash - 1) < 0.01 and p._quiet_idle_ok())
+
+    # 27. 冥想星核:远侧在立绘前画、近侧在立绘后画;结束回 idle 后不再画
+    _quiet_reset()
+    _orbs, _seq = [], []
+    _real_orb, _real_dmo = p.fx.orb, p._draw_meditate_orbs
+    p.fx.orb = lambda fr, x, y, side, vis: (_orbs.append((side, vis)),
+                                            _real_orb(fr, x, y, side, vis))
+    p._draw_meditate_orbs = lambda fr, now, k, side: (_seq.append(side),
+                                                      _real_dmo(fr, now, k, side))
+    try:
+        p.start_meditate()
+        p.meditate_start = time.time() - 2.2
+        p.state_until = p.meditate_start + 5.6
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check(f"冥想星核: 先远侧后近侧,三颗星核都贴上({_seq}, {len(_orbs)})",
+              _seq == ["far", "near"] and len(_orbs) == 3
+              and all(v == 1 for _, v in _orbs))
+        p.meditate_start -= 10
+        p.state_until -= 10
+        _tick_quiet()
+        _orbs.clear()
+        _seq.clear()
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check("冥想星核: 结束回到 idle 后不再画,升空归零",
+              p.state == "idle" and not _seq and not _orbs and p._spin_lift == 0.0)
+    finally:
+        del p.fx.orb, p._draw_meditate_orbs
+
+    # ---- 28~31 动态感第二批(E25~E28) ----
+    # 28. 星光飘字:飘的是实际加上的量;满了不飘;在场算演出,清掉回安静档
+    _quiet_reset()
+    if getattr(p.fx, "gain", None) is None:      # 后台预热可能还没轮到
+        p.fx.build_gain_glyphs(pet.load_font(int(17 * p.scale * pet.SS)))
+    _star0 = p.star
+    p.star = 90.0
+    _g = p.gain_star(40)
+    _gp = [q for q in p.parts if q["kind"] == "gain"]
+    check(f"星光飘字: 90 喂 40 只飘实际的 +10({_g}, {[q['txt'] for q in _gp]})",
+          _g == 10 and p.star == 100.0 and len(_gp) == 1 and _gp[0]["txt"] == "+10*")
+    p.parts = []
+    check("星光飘字: 已满时加星光不飘字", p.gain_star(5) == 0 and not p.parts)
+    p.star = 50.0
+    p.gain_star(2, 30, -100)
+    check("星光飘字: 在场时算演出给 60fps", p._frame_delay() == 16)
+    _texts = []
+    _real_gt = p.fx.gain_text
+    p.fx.gain_text = lambda fr, x, y, txt, vis: (_texts.append((txt, vis)),
+                                                  _real_gt(fr, x, y, txt, vis))
+    try:
+        p.parts[0]["born"] -= 0.4
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check(f"星光飘字: 渲染时排出预渲染字形({_texts})",
+              _texts and _texts[0][0] == "+2*" and _texts[0][1] > 0.9)
+    finally:
+        del p.fx.gain_text
+    for _q in p.parts:
+        _q["born"] -= 5
+    _tick_quiet()
+    check("星光飘字: 寿命到后清掉,回到 20fps 安静档",
+          not any(q["kind"] == "gain" for q in p.parts) and p._frame_delay() == 50)
+    p.star = _star0
+
+    # 29. 光标感应:靠近时法阵能量升起 + 一道欢迎光纹;离开后退回、恢复安静档
+    _quiet_reset()
+    p._curious_cd = time.time() + 999          # 不测"在叫我吗?"那段歪头,免得它挡档位
+    p._prox = 0.0
+    p._ripple_kick = -99.0
+    p._cursor_near = False
+    pet.cursor_pos = lambda: (int(p.x + p.W / 2), int(p.fy - p.H * 0.35))
+    for _ in range(25):
+        _tick_quiet()
+    _energy = []
+    _real_gc = p.fx.ground_circle
+    p.fx.ground_circle = lambda *a, **k: (_energy.append(k.get("energy")), _real_gc(*a, **k))
+    try:
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+    finally:
+        del p.fx.ground_circle
+    check(f"光标感应: 靠近后感应强度升起、法阵能量抬高({p._prox:.2f}, {_energy})",
+          p._prox > 0.9 and _energy and _energy[0] >= 0.45)
+    check("光标感应: 刚靠近时记下欢迎光纹", time.time() - p._ripple_kick < 2.0)
+    pet.cursor_pos = lambda: (-99999, -99999)
+    for _ in range(40):
+        _tick_quiet()
+    check(f"光标感应: 光标离开后退回({p._prox:.3f})且回到 20fps 安静档",
+          p._prox < 0.03 and p._frame_delay() == 50)
+
+    # 30. 抛飞拖尾:星星速度与窗口相反、重力相反,在屏幕上留在原地
+    _quiet_reset()
+    _x_save = p.x
+    # 放到屏幕中间:前面的用例可能把她留在边缘,这一帧撞墙的话 hit_wall 会
+    # 另撒一把星星、还把 vx 反向,就测不到拖尾本身了
+    p.x = (p.x_min + p.x_max) / 2
+    p.state = "fly"
+    p.fy = float(p.ground_feet) - 300
+    p.vx, p.vy = -1000.0, -400.0
+    p.bounces = 0
+    p.next_trail = 0.0
+    _t_fly = time.time()
+    p.last = time.time() - 0.033
+    p._tick_body()
+    _trail = [q for q in p.parts if q["kind"] == "star" and q["born"] >= _t_fly]
+    check(f"抛飞拖尾: 反向速度+反向重力,沿路补星({len(_trail)} 颗)",
+          _trail and all(abs(q["vx"] + p.vx) <= 25.5 and abs(q["vy"] + p.vy) <= 25.5
+                         and q["grav"] == -1500 for q in _trail))
+    _quiet_reset()
+    p.vx = p.vy = 0.0
+    p.x = _x_save
+
+    # 31. 抓取光环:按住后开始拖动的那一下亮一圈,继续拖不重复,松手结束拖拽
+    _quiet_reset()
+    from types import SimpleNamespace as _NS
+    _px, _py = p.W * 0.5, p.H * 0.45
+    _ev = _NS(x=_px, y=_py, x_root=p.x + _px, y_root=p.fy - p.FOOT_Y + _py)
+    p.on_press(_ev)
+    p.on_drag(_NS(x=_px + 10, y=_py, x_root=_ev.x_root + 10, y_root=_ev.y_root))
+    _grab = [q for q in p.parts if q["kind"] == "hit_ring"]
+    check(f"抓取光环: 开始拖动亮一圈,落在按下的位置({len(_grab)})",
+          len(_grab) == 1 and abs(_grab[0]["x"] - _px) < 1.5 and abs(_grab[0]["y"] - _py) < 1.5)
+    p.on_drag(_NS(x=_px + 20, y=_py, x_root=_ev.x_root + 20, y_root=_ev.y_root))
+    check("抓取光环: 继续拖动不重复亮",
+          len([q for q in p.parts if q["kind"] == "hit_ring"]) == 1)
+    p._drag_trail = []
+    p.on_release(_NS(x=_px, y=_py, x_root=_ev.x_root + 20, y_root=_ev.y_root))
+    check("抓取光环: 松手后结束拖拽", p.drag is None)
+    _quiet_reset()
+
+    (p._fast_ok, p.last_interact, pet.cursor_pos, p._micro_motion,
+     p.hop_t, p.lean_kick, p.blink_until, p._mouth, p.next_blink,
+     p.next_meteor, p.squash) = _save_live
+    p.parts = []
+
+    p.state, p.drag = _st_save, _drag_save
 
     return _finish(p)
 
