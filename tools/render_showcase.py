@@ -56,8 +56,14 @@ def panel(bg, art, number, title, subtitle, detail, dx=0, dy=0):
     for i,line in enumerate(detail.split('\n')):
         d.text((42,368+i*28), line, font=font(15), fill=MUTED)
     # Same fixed viewport for every frame; never reshape character anatomy.
-    art = art.crop((0,90,art.width,art.height))
-    canvas.paste(art,(430+round(dx),105+round(dy)),art)
+    if number in ('04', '05', '06'):
+        # Keep the top-of-window reward text and all orbiting particles visible.
+        art = art.copy()
+        art.thumbnail((480, 440), Image.Resampling.LANCZOS)
+        canvas.paste(art,(680-art.width//2+round(dx),98+round(dy)),art)
+    else:
+        art = art.crop((0,90,art.width,art.height))
+        canvas.paste(art,(430+round(dx),105+round(dy)),art)
     d = ImageDraw.Draw(canvas)
     d.text((42,H-37), '小乔 · 时之魔女', font=font(13), fill=MUTED)
     return canvas
@@ -104,6 +110,7 @@ def hero(art):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hero-only', action='store_true')
+    parser.add_argument('--new-only', action='store_true', help='Render the September feature additions only')
     args = parser.parse_args()
     OUT.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='xiaoqiao-showcase-') as folder:
@@ -129,12 +136,19 @@ def main():
             p.sfx.enabled=False
             p._pump=lambda:None
             p._fg_watch_tick=lambda now:None
+            p._battery_tick=lambda now:None
+            p._stats_tick=lambda now:None
             p.reminders,p.pomo,p.water_min=[],None,0
             p.cfg['blink_overlay']=True
+            p.fx.build_gain_glyphs(pet.load_font(int(17*p.fx.scale*pet.SS)))
             bg=background()
             scenes=[('presence',[('look',3.6),('nuzzle',2.4)]),
                     ('magic',[('transform',3.2),('dance',4.4)]),
                     ('play',[('drag',3.2),('ball',3.6)])]
+            additions=[('meditation',[('meditate',5.8)]),
+                       ('feedback',[('touch',2.2),('candy',3.2)]),
+                       ('charging',[('charge',3.0)])]
+            scenes=additions if args.new_only else scenes+additions
             labels={
                 'look':('01','你的目光，\n她会回应。','轻微转头 · 自然呼吸','头部、身体与发梢，\n各有一点自己的节奏。'),
                 'nuzzle':('01','轻轻摸头，\n靠近一点。','摸头反馈 · 轻蹭回应','一次小小的互动，\n也有认真回应。'),
@@ -142,6 +156,11 @@ def main():
                 'dance':('02','想开心，\n就跳一支舞。','节拍摆动 · 动作节选','踩着星光，\n把快乐晃给你看。'),
                 'drag':('03','提起来，\n轻轻放下来。','速度反馈 · 柔和回正','移动有回应，\n停下也有小小的缓冲。'),
                 'ball':('03','这一颗星，\n一起接住。','光球反弹 · 点击接住','点一下光球，\n收下她的星光回应。')}
+            labels.update({
+                'meditate':('04','静下来，\n让星光环绕。','浮空冥想 · 约 5.6 秒','聊天输入「冥想」。\n三颗星核，在身前身后绕行。'),
+                'touch':('05','每一下，\n都有回应。','摸头 · 粉色命中光环','点击的位置，亮起一圈光。\n轻蹭与星光，接住你的心意。'),
+                'candy':('05','这一颗糖，\n甜进心里。','糖果轨迹 · 咀嚼 · 星光飘字','获得多少，就显示多少。\n星光满了，不再重复加分。'),
+                'charge':('06','充上电，\n也充点星光。','电量提醒 · 插电反馈','本演示使用模拟插电事件。\n专注与睡眠时不打扰。')})
             for name,segments in scenes:
                 frames=[]
                 for scene,duration in segments:
@@ -163,6 +182,10 @@ def main():
                         setattr(p,attr,born+1000)
                     with patch.object(pet.time,'time',return_value=born):
                         if scene in ('transform','dance'): getattr(p,'start_'+scene)()
+                        elif scene=='meditate': p.start_meditate()
+                        elif scene=='touch': p.pet_head()
+                        elif scene=='candy': p.eat_candy()
+                        elif scene=='charge': p._battery_react('plug',55)
                         elif scene=='ball': p.throw_ball()
                         elif scene=='drag': p.drag=(100,100,500,p.ground_feet,False,born)
                         elif scene=='nuzzle': p._start_micro_motion('nuzzle')
@@ -186,6 +209,9 @@ def main():
                                     b=next(q for q in p.parts if q['kind']=='ball')
                                     p._catch_ball(b['x'],b['y'])
                                 p._tick_body()
+                            if scene=='meditate' and i==50:
+                                assert p.state=='meditate', f'Meditation interrupted in preview: {p.state}'
+                                assert p._spin_lift>20*p.scale, 'Meditation did not rise'
                             # Keep original action particles, but suppress random phrase/sticker
                             # overlays so this fixed editorial viewport stays readable.
                             p.bubble=p.sticker=None
@@ -202,7 +228,8 @@ def main():
                             d=ImageDraw.Draw(frame)
                             d.text((780,515),'点击光球',font=font(12),fill=GOLD)
                         frames.append(frame)
-                save_animation(name,frames,20 if name!='magic' else 28)
+                poster={'magic':28,'meditation':50,'feedback':71,'charging':8}.get(name,20)
+                save_animation(name,frames,poster)
             p.sfx.close_all()
         finally:
             root.destroy()

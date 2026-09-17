@@ -20,6 +20,9 @@ def main():
     if os.name!='nt':
         print('These tests require Windows and Tkinter.')
         return 2
+    docs = subprocess.run([sys.executable, '-X', 'utf8', str(ROOT/'tools'/'check_docs.py')], cwd=ROOT)
+    if docs.returncode:
+        return docs.returncode
     with tempfile.TemporaryDirectory(prefix='xiaoqiao-checks-') as directory:
         stage=Path(directory)
         for p in ROOT.glob('*.py'):
