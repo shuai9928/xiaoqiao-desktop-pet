@@ -62,9 +62,9 @@ AI 开启后，对话及相关记忆会发送给配置的模型服务；请求�
 ## 开发与测试
 
 ```powershell
-# 在临时副本运行，隔离个人数据并关闭真实 AI
+# 在临时副本运行，隔离个人数据并关闭真实 AI（CI 的 core-checks 也跑这一项）
 .\.venv\Scripts\python.exe tools\run_checks.py
-# 仅单元与模拟 UI 检查（供 CI 使用）
+# 仅单元与模拟 UI 检查（CI 的 checks 跑这一项）
 .\.venv\Scripts\python.exe tools\run_checks.py --unit-only
 # 发布前检查 Git 跟踪文件是否包含运行数据、密钥或本机路径
 .\.venv\Scripts\python.exe tools\check_public_files.py
@@ -75,6 +75,8 @@ AI 开启后，对话及相关记忆会发送给配置的模型服务；请求�
 | 文件 | 职责 |
 | --- | --- |
 | `pet.py` | 窗口、交互、状态机、聊天 UI、音效 |
+| `interaction_card.py` | 右键互动卡片 |
+| `ui_theme.py` | 面板与对话框的配色、字号 |
 | `depth_model.py` | 连续深度网格、部位跟随、光照与阴影缓存 |
 | `fx.py` | 法阵、粒子和特效缓存 |
 | `ai_chat.py` | 可选 AI、记忆、回复解析 |

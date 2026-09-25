@@ -21,7 +21,8 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='xiaoqiao-ui-guide-') as folder:
         stage = Path(folder)
-        for name in ('pet.py', 'agent.py', 'ai_chat.py', 'fx.py', 'depth_model.py'):
+        for name in ('pet.py', 'agent.py', 'ai_chat.py', 'fx.py', 'depth_model.py',
+                     'interaction_card.py', 'ui_theme.py'):
             shutil.copy2(ROOT / name, stage / name)
         shutil.copytree(ROOT / 'assets', stage / 'assets', ignore=shutil.ignore_patterns(
             'ai_config*.json', 'memories*.json', '*backup*', 'audio_v2', '*.log', '*.tmp'))

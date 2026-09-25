@@ -6,8 +6,8 @@
 
 | 工具 | 命令 | 会做什么 |
 | --- | --- | --- |
-| 隔离完整回归 | `python tools/run_checks.py` | 临时复制代码和素材，关闭真实 AI，运行单元、助手及完整角色检查；短暂打开测试窗口 |
-| CI 检查 | `python tools/run_checks.py --unit-only` | 单元、模拟 UI 和助手检查，不运行完整角色集成 |
+| 隔离完整回归 | `python tools/run_checks.py` | 临时复制代码和素材，关闭真实 AI，运行单元、助手及完整角色检查；短暂打开测试窗口。CI 的 `core-checks` job 运行这一项 |
+| 快速检查 | `python tools/run_checks.py --unit-only` | 单元、模拟 UI 和助手检查，不运行完整角色集成。CI 的 `checks` job 运行这一项 |
 | 公开文件检查 | `python tools/check_public_files.py` | 检查 Git 跟踪文件，拒绝运行数据、常见密钥与本机用户路径；输出位置而不输出密钥值 |
 | 文档检查 | `python tools/check_docs.py` | 检查 Markdown 本地链接、HTML 图片引用、显式锚点和空媒体文件，不访问外网 |
 | 全部角色演示 | `python tools/render_showcase.py` | 覆盖 `docs/media/` 中主视觉、六段 WebP 和六张 PNG；实际角色渲染、20 fps 离线输出 |
