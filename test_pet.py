@@ -161,12 +161,21 @@ def _run(p, root=None):
     check("指令: 损坏内容报一次", getattr(p, "_cmd_err_mt", None) is not None)
 
     # ---- 3. SFX 限频与开关 ----
+    # 测的是限频逻辑,不是这台机器有没有声卡:GitHub 的 Windows runner 没有
+    # 音频设备,MCI open 失败时 play() 按设计静默返回 False(见 SFX 文档串),
+    # 第一声就不算"播了",断言的前一半永远不成立。这里把 mci 换成总会成功的
+    # 假设备,第一声放行、第二声被 5 秒全局限频拦下,两半都照旧要成立。
     p.sfx.enabled = True
     p.sfx._next_any = 0.0
     p.sfx._next = {}
     p.sfx._chan = {}
-    r1 = p.sfx.play("greet"); r2 = p.sfx.play("voice_happy")
-    check("SFX: 5 秒全局限频", r1 is True and r2 is False)
+    _real_mci = pet.mci
+    pet.mci = lambda c: (0, "1000")
+    try:
+        r1 = p.sfx.play("greet"); r2 = p.sfx.play("voice_happy")
+    finally:
+        pet.mci = _real_mci
+    check(f"SFX: 5 秒全局限频(首声 {r1} / 次声 {r2})", r1 is True and r2 is False)
     p._next_any = time.time() - 0.1
     p.sfx.enabled = False
     check("SFX: 总开关关闭", p.sfx.play("greet") is False)
@@ -1040,7 +1049,11 @@ def _run(p, root=None):
     # 另撒一把星星、还把 vx 反向,就测不到拖尾本身了
     p.x = (p.x_min + p.x_max) / 2
     p.state = "fly"
-    p.fy = float(p.ground_feet) - 300
+    # 竖直方向同理:放在天花板(H*0.55)和地面正中间。原来固定"离地 300px",
+    # 屏幕矮时离天花板太近:1024x768、任务栏 40px、100% 缩放时地面 588、
+    # 离地 300px 是 288,天花板 286,这一帧往上一飞就撞顶,hit_wall 另撒的
+    # 6 颗 grav=180 星星混进拖尾(CI 上正是 1 颗拖尾 + 6 颗 = 7 颗)
+    p.fy = (p.H * 0.55 + float(p.ground_feet)) / 2
     p.vx, p.vy = -1000.0, -400.0
     p.bounces = 0
     p.next_trail = 0.0
@@ -1048,7 +1061,7 @@ def _run(p, root=None):
     p.last = time.time() - 0.033
     p._tick_body()
     _trail = [q for q in p.parts if q["kind"] == "star" and q["born"] >= _t_fly]
-    check(f"抛飞拖尾: 反向速度+反向重力,沿路补星({len(_trail)} 颗)",
+    check(f"抛飞拖尾: 反向速度+反向重力,沿路补星({len(_trail)} 颗, grav {sorted({q['grav'] for q in _trail})})",
           _trail and all(abs(q["vx"] + p.vx) <= 25.5 and abs(q["vy"] + p.vy) <= 25.5
                          and q["grav"] == -1500 for q in _trail))
     _quiet_reset()
