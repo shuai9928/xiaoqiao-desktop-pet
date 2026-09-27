@@ -56,6 +56,27 @@ def main():
     check(f"意图: 口语覆盖 {hit}/{len(cases)} {misses or ''}",
           hit == len(cases))
 
+    # ---- 1b. 勿扰指令 ----
+    # 「关闭勿扰」「打开勿扰」曾会被通用 open/close 规则当成开关一个叫「勿扰」
+    # 的程序;「别吵」带否定词,不在本地接住就会整句交给 AI。
+    dnd = [
+        ("勿扰", "on", None), ("打开勿扰", "on", None), ("开启勿扰模式", "on", None),
+        ("安静一会儿", "on", None), ("别吵我", "on", None), ("小乔,别说话了", "on", None),
+        ("勿扰一小时", "on", 60.0), ("安静半小时", "on", 30.0), ("勿扰 2 小时", "on", 120.0),
+        ("安静30分钟", "on", 30.0),
+        ("关闭勿扰", "off", None), ("结束勿扰", "off", None), ("取消勿扰模式", "off", None),
+        ("可以说话了", "off", None),
+    ]
+    got = [(t, agent.parse(t)) for t, _, _ in dnd]
+    bad = [f"{t!r} -> {r and (r['kind'], r.get('target'), r.get('minutes'))}"
+           for (t, want, mins), (_, r) in zip(dnd, got)
+           if not (r and r["kind"] == "dnd" and r["target"] == want
+                   and r.get("minutes") == mins)]
+    check(f"勿扰: 开关与时长 {len(dnd) - len(bad)}/{len(dnd)} {bad or ''}", not bad)
+    keep = ["安静地陪我写作业", "勿扰是什么意思", "别吵架", "安静的音乐"]
+    stolen = [t for t in keep if agent.parse(t)]
+    check(f"勿扰: 不误吞普通句子 {stolen or ''}", not stolen)
+
     # ---- 2. 提醒解析的分钟数换算 ----
     probes = [
         ("5分钟后提醒我喝水", 5.0, "喝水"),

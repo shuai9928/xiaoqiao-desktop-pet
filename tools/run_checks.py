@@ -11,7 +11,7 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 UNITS=['test_action_fx','test_micro_motion','test_refinement','test_chat_ui',
        'test_focus','test_feedback','test_recovery','test_depth',
-       'test_fullscreen']
+       'test_fullscreen','test_dnd']
 
 
 def main():

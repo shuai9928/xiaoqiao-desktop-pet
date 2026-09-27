@@ -57,6 +57,7 @@ flowchart TD
 | 完整菜单与动态开关 | `Pet._build_menu()`、`start_tray()` |
 | 新动作和中途打断 | `start_*()`、`_begin_tl()`、`_play_timeline()`、`_tick_body()` |
 | 电量感知 | `_power_status()`、`_battery_event()`、`_battery_tick()` |
+| 勿扰 | `dnd_active()`、`_hush()`（专注或勿扰：不主动开口）、`start_dnd()`／`end_dnd()`；新增主动说话或出声的入口时，先想清楚要不要用 `_hush()` 或 `dnd_active()` 挡住。声音在 `SFX.hush` 统一拦截，只放行 `SFX.HUSH_ALLOW` 里的提醒提示音 |
 | 全屏避让 | `_notification_state()`、`_fs_step()`、`_fs_tick()`；隐藏时 `_tick_body()` 不运行，需要看得见的事件（提醒、番茄钟）先调用 `_fs_show(by_user=True)` |
 | 互动奖励 | `gain_star()`；不要绕过它直接增加星光，否则缺少飘字反馈 |
 | 光环、法阵、冥想星核 | `fx.FX`、`_draw_meditate_orbs()`、`render()` |
@@ -94,8 +95,9 @@ GitHub Actions 的 Windows checks 有两个 job：`checks` 运行公开文件检
 | `test_feedback.py` | 表情与互动反馈 |
 | `test_recovery.py` | 打断与姿态恢复 |
 | `test_depth.py` | 网格、姿态边界、透明度和缓存 |
+| `test_dnd.py` | 勿扰判定（手动定时、夜间时段边界、当晚提前结束）、开关落盘、音效只放行提醒、朗读静音、气泡变短、喝水提醒顺延 |
 | `test_fullscreen.py` | 全屏避让的采样节流、连续判定、手动隐藏与托盘叫出、聊天窗、提醒和番茄钟唤出；打桩 Windows 通知状态 |
-| `test_agent.py` | 25 条意图样例、提醒解析、临时应用索引，不启动真实软件 |
+| `test_agent.py` | 25 条意图样例、勿扰指令与时长、提醒解析、临时应用索引，不启动真实软件 |
 | `test_pet.py` | 完整角色集成、计数、电量、数据写入、命令与新特效等 |
 
 2026-09-17 此次本地隔离运行：**106 项单元／UI 检查 + 9 项助手检查 + 137 项核心检查通过**。助手检查中的意图覆盖另含 25 条句子；不要把它们重复加进总数。检查数量会随代码演进变化，以实际输出为准。

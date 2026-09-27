@@ -364,6 +364,7 @@ class SFX:
     """
 
     GLOBAL_CD = 5.0     # 任意两个音效之间的最小间隔(最多每 5 秒响一次)
+    HUSH_ALLOW = ("notify",)   # 勿扰中仍然出声的:提醒是主人自己定的
     CLOSE_DELAY = 0.5   # 播完再回收 alias 的余量(秒)
     CD = {              # 同名音效的最小重触发间隔(全局限频之外的安全网)
         "voice_happy": 0.7, "voice_giggle": 0.7, "voice_magic": 0.9,
@@ -380,6 +381,7 @@ class SFX:
         self._next_any = 0.0
         self._next = {}
         self._chan = {}     # 槽位 -> 当前 alias("main"=最新语音,"fx"=闪烁层)
+        self.hush = None    # 可选:返回 True 时只放行 HUSH_ALLOW 里的声音(勿扰)
         self.groups = {}
         for name, stems in SFX_FILES.items():
             files = [os.path.join(SFX_DIR, s + ".wav") for s in stems]
@@ -390,6 +392,8 @@ class SFX:
     def play(self, name, fx=False):
         """尝试播一个音效。返回 True=真的播了,False=被限频/关闭/失败跳过。"""
         if not self.enabled or name not in self.groups:
+            return False
+        if name not in self.HUSH_ALLOW and self.hush is not None and self.hush():
             return False
         try:
             now = time.time()
@@ -994,6 +998,12 @@ class Pet:
         self._fs_streak = 0             # 连续判定为全屏的次数(防一闪而过)
         self._fs_hidden = False         # 是不是全屏避让藏起来的(不是托盘手动隐藏)
         self._fs_user_shown = False     # 这次全屏期间主人又把她叫出来了,别再藏
+        # 勿扰:到 dnd_until 为止,或每晚 NIGHT_DND 时段(night_dnd 开着时)
+        try:
+            self.dnd_until = float(self.settings.get("dnd_until") or 0.0)
+        except (TypeError, ValueError):
+            self.dnd_until = 0.0
+        self.night_dnd = bool(self.settings.get("night_dnd", False))
         self._batt_prev = None          # 上一次采样的 (接着电源, 电量%)
         self._batt_next = 0.0           # 下次采样时间(每分钟一次)
         self._batt_star_cd = 0.0        # 插电送星光的冷却,防反复插拔刷星光
@@ -1106,6 +1116,7 @@ class Pet:
         # 小音效(摸头/魔法/弹跳等)独立于 TTS 朗读,可在托盘或右键菜单关
         self.sound_on = bool(self.settings.get("sound_on", True))
         self.sfx = SFX(root)
+        self.sfx.hush = self.dnd_active
         self.sfx.enabled = self.sound_on
         self._speak_lock = threading.Lock()
         self.city = str(self.settings.get("city", ""))
@@ -1373,6 +1384,8 @@ class Pet:
                            "fg_watch": self.fg_watch,
                            "battery_watch": self.battery_watch,
                            "fs_avoid": self.fs_avoid,
+                           "dnd_until": round(self.dnd_until, 1),
+                           "night_dnd": self.night_dnd,
                            "tts_on": self.tts_on,
                            "tts_volume": self.tts_volume,
                            "sound_on": self.sound_on,
@@ -1543,7 +1556,7 @@ class Pet:
             # 自适应 —— 于是长台词也是 2.5 秒就蒸发。没显式指定时按阅读
             # 速度给足时间;显式传了 dur 的(猜拳倒计时 0.8 等)行为不变。
             dur = max(2.5, min(14.0, 1.2 + len(text) * 0.14))
-        if not keep and self.focus_mode():
+        if not keep and self._hush():
             # 专注陪伴中她把话说短:主人主动摸她当然要回应,但不占着屏幕
             # 不走。keep=True 的是提醒和 AI 回答 —— 那是主人自己要的内容,
             # 长度得按阅读速度来,不受此限。
@@ -3389,6 +3402,13 @@ class Pet:
         if not intent.get("_from_ai"):
             self._log_chat("user", intent["raw"])
         self.last_interact = time.time()
+        if intent.get("kind") == "dnd":
+            # 放在叫醒之前:睡着时说"勿扰"就让她接着睡,不必先叫醒再出声
+            if intent.get("target") == "off":
+                self.end_dnd()
+            else:
+                self.start_dnd(intent.get("minutes") or 60)
+            return
         if self.state == "sleep":
             self.wake_up()
         # 提醒/剪贴板/找文件/看屏幕/番茄钟/翻译需要定时器、线程、Tk 或截屏,
@@ -3907,6 +3927,16 @@ class Pet:
             return
         self._schedule_reminder(mins, text)
 
+    def _water_tick(self, now):
+        if self.water_min <= 0 or now < self.water_next:
+            return
+        if self.dnd_active(now):
+            # 周期性的催促不算主人亲自定的提醒:勿扰中先不催,结束后一分钟内补一次
+            self.water_next = now + 60
+            return
+        self.water_next = now + self.water_min * 60
+        self._fire_reminder("该喝水啦!顺便起来动一动~")
+
     def set_water_reminder(self, minutes):
         self.water_min = int(minutes)
         if self.water_min > 0:
@@ -4108,6 +4138,8 @@ class Pet:
             self._fg_say_on(f"代码写了 {int(span // 60)} 分钟啦,起来走走,我看着你", title)
 
     def _fg_say_on(self, fallback, title):
+        if self.dnd_active():
+            return
         # 有 AI 就结合窗口标题说得有鼻子有眼,没 AI 就说固定台词
         if self.brain and self.brain.available and random.random() < 0.6:
             self._ai_quick(f"主人的前台窗口标题是「{title[:80]}」。"
@@ -4162,7 +4194,7 @@ class Pet:
         ev = self._battery_event(self._batt_prev, cur)
         self._batt_prev = cur
         # 专注时和睡着时不打扰;事件本身已记下,不会攒着事后补报
-        if ev and not self.focus_mode() and self.state not in ("sleep", "yawn"):
+        if ev and not self._hush() and self.state not in ("sleep", "yawn"):
             self._battery_react(ev, cur[1])
 
     # ---------- 全屏避让 ----------
@@ -4242,6 +4274,85 @@ class Pet:
             self._fs_hidden = False
             self.root.deiconify()
 
+    # ---------- 勿扰 ----------
+    NIGHT_DND = (23, 7)       # 夜间勿扰:23:00 到次日 7:00
+
+    @classmethod
+    def _night_key(cls, lt):
+        """lt 落在哪一晚的夜间勿扰里(用这一晚开始那天的日期标识);不在时段内返回 None。"""
+        start, end = cls.NIGHT_DND
+        if lt.tm_hour >= start:
+            return time.strftime("%Y-%m-%d", lt)
+        if lt.tm_hour < end:
+            return time.strftime("%Y-%m-%d", time.localtime(time.mktime(lt) - 86400))
+        return None
+
+    def dnd_active(self, now=None):
+        """勿扰中吗?手动定时没到期,或夜间勿扰开着、正在时段内且今晚没被主人提前结束。
+
+        用 getattr 读字段:几个 unittest 文件用 Pet.__new__ 造壳桌宠、不跑
+        __init__,而 say() 会经 _hush() 调到这里。
+        """
+        now = time.time() if now is None else now
+        if now < getattr(self, "dnd_until", 0.0):
+            return True
+        if not getattr(self, "night_dnd", False):
+            return False
+        key = self._night_key(time.localtime(now))
+        return key is not None and key != getattr(self, "settings", {}).get("night_skip")
+
+    def _hush(self):
+        """此刻不该主动开口:番茄钟专注中,或勿扰中。"""
+        return self.focus_mode() or self.dnd_active()
+
+    def _dnd_end_at(self, now):
+        """勿扰实际持续到哪一刻:手动定时和今晚的夜间时段取较晚的那个。"""
+        end = self.dnd_until if now < self.dnd_until else 0.0
+        if self.night_dnd:
+            key = self._night_key(time.localtime(now))
+            if key and key != self.settings.get("night_skip"):
+                d = time.strptime(key, "%Y-%m-%d")
+                end = max(end, time.mktime((d.tm_year, d.tm_mon, d.tm_mday + 1,
+                                            self.NIGHT_DND[1], 0, 0, 0, 0, -1)))
+        return end
+
+    def _dnd_end_text(self, now=None):
+        now = time.time() if now is None else now
+        return time.strftime("%H:%M", time.localtime(self._dnd_end_at(now)))
+
+    def start_dnd(self, minutes=60):
+        minutes = max(1, min(int(minutes), 12 * 60))
+        self.dnd_until = time.time() + minutes * 60
+        self.save_settings()
+        self._reply(f"好,{self._dnd_end_text()} 之前我安静陪着你,不主动说话、不出声~"
+                    "提醒到点还是会叫你。", "roger")
+
+    def end_dnd(self):
+        was = self.dnd_active()
+        self.dnd_until = 0.0
+        key = self._night_key(time.localtime())
+        if self.night_dnd and key:
+            self.settings["night_skip"] = key   # 只结束今晚这一段,明晚照常
+        self.save_settings()
+        if was:
+            self._reply("好~我回来啦,有事随时叫我!", "happy")
+        else:
+            self._reply("现在没有在勿扰哦~", "curious")
+
+    def toggle_night_dnd(self):
+        self.night_dnd = not self.night_dnd
+        self.settings.pop("night_skip", None)
+        self.save_settings()
+        start, end = self.NIGHT_DND
+        self.say(f"好,每晚 {start}:00 到早上 {end}:00 我都安静陪着你~" if self.night_dnd
+                 else "好,夜里我也照常陪你聊~", 2.8)
+
+    def _tray_dnd(self):
+        if self.dnd_active():
+            self.end_dnd()
+        else:
+            self.start_dnd(60)
+
     def toggle_fs_avoid(self):
         self.fs_avoid = not self.fs_avoid
         self._fs_streak = 0
@@ -4314,7 +4425,7 @@ class Pet:
         today = time.strftime("%Y-%m-%d")
         if (time.localtime().tm_hour >= 21 and self.settings.get("summary_day") != today
                 and self.state == "idle" and not self.bubble and not self.drag
-                and not self.focus_mode() and now - self.last_interact > 20):
+                and not self._hush() and now - self.last_interact > 20):
             self.settings["summary_day"] = today
             s = self._today_summary()
             if s:
@@ -4373,7 +4484,7 @@ class Pet:
         这样"她说话"和"她的反应音"才像同一个人。合成不了(没装 venv / 断网 /
         超时)才退回系统 SAPI,那条路是机器音,只当兜底。
         """
-        if not self.tts_on or not self.sound_on or not text:
+        if not self.tts_on or not self.sound_on or not text or self.dnd_active():
             return
         text = " ".join(str(text).split())[:120]
         if not text:
@@ -5111,6 +5222,19 @@ class Pet:
                                 variable=self._magic_style_var)
         m.add_cascade(label="⏳ 时间魔法 ▸", menu=magic_m)
         m.add_command(label="✦ 和小乔聊天", command=self.open_chat)
+        dnd = self._menu(m)
+        quiet = self.dnd_active()
+        if quiet:
+            dnd.add_command(label=f"勿扰中,到 {self._dnd_end_text()}", state="disabled")
+            dnd.add_command(label="现在结束勿扰", command=self.end_dnd)
+            dnd.add_separator()
+        for label, mins in (("安静 30 分钟", 30), ("安静 1 小时", 60), ("安静 2 小时", 120)):
+            dnd.add_command(label=label, command=lambda v=mins: self.start_dnd(v))
+        dnd.add_separator()
+        dnd.add_command(label=(f"每晚 {self.NIGHT_DND[0]}:00–{self.NIGHT_DND[1]}:00 自动勿扰:"
+                               + ("开" if self.night_dnd else "关")),
+                        command=self.toggle_night_dnd)
+        m.add_cascade(label=("☾ 勿扰中 ▸" if quiet else "☾ 勿扰 ▸"), menu=dnd)
         m.add_command(label=("停止唱歌" if self.singing else "唱首歌 ♪"),
                       command=self.sing)
 
@@ -5401,6 +5525,8 @@ class Pet:
                 pystray.MenuItem("随机表情", lambda: self.post(self.random_emotion)),
                 pystray.MenuItem(lambda item: "语音:开" if self.sound_on else "语音:关",
                                  lambda: self.post(self.toggle_sound)),
+                pystray.MenuItem(lambda item: "结束勿扰" if self.dnd_active() else "勿扰 1 小时",
+                                 lambda: self.post(self._tray_dnd)),
                 pystray.MenuItem("退出", lambda: self.post(self.quit)))
             self._tray = pystray.Icon("xiaoqiao", icon_img, "小乔·时之魔女", menu)
             threading.Thread(target=self._tray.run, daemon=True).start()
@@ -5494,6 +5620,7 @@ class Pet:
                 "quiet_idle": self._quiet_idle_ok(),
                 "quiet_block": getattr(self, "_quiet_block", ""),
                 "focus": self.focus_mode(),
+                "dnd": self.dnd_active(),
                 "particles": len(self.parts),
                 "warp_cache": len(self._warp_cache),
             }
@@ -5775,7 +5902,7 @@ class Pet:
         # 不然玩家根本不会知道要去右键喂糖
         if self.star < 25 and prev_star >= 25 and not self._star_warned:
             self._star_warned = True
-            if self.state != "sleep":
+            if self.state != "sleep" and not self.dnd_active():
                 self.say(random.choice(HUNGRY_SAY), 3.0)
                 self.play_emotion("tired", 2.6)
         if self.star >= 50:
@@ -5834,6 +5961,9 @@ class Pet:
             # 专注期间不主动搭话;把下次时间推到这段结束之后,免得一收工
             # 就立刻蹦一句出来(那比中途说话更突兀)
             self.next_greet = max(self.next_greet, self.pomo["due"] + 60)
+        elif self.dnd_active():
+            # 勿扰期间一直往后推:结束后至少再过一分钟才可能搭话
+            self.next_greet = max(self.next_greet, now + 60)
         elif (self._ai_ready()
                 and self.state in ("idle", "sticker")
                 and now > self.next_greet):
@@ -5850,9 +5980,7 @@ class Pet:
                 self._save_reminders()
                 for r in due:
                     self._fire_reminder(r.get("text", "时间到啦~"))
-        if self.water_min > 0 and now >= self.water_next:
-            self.water_next = now + self.water_min * 60
-            self._fire_reminder("该喝水啦!顺便起来动一动~")
+        self._water_tick(now)
 
         # 专注陪伴:安静地冒几点星光,不说话
         self._focus_tick(now)
@@ -5931,6 +6059,7 @@ class Pet:
         if (self.state == "idle" and not self.singing
                 and now - self.last_interact > 30
                 and not self.bubble
+                and not self._hush()
                 and now > getattr(self, "_idle_mumble_cd", 0)):
             self._idle_mumble_cd = now + random.uniform(60, 120)
             if random.random() < 0.03:
@@ -5952,7 +6081,7 @@ class Pet:
             # 跳舞、探头和整个 _idle_event(走动/贴纸/闲聊/哼歌/吹泡泡/
             # 打喷嚏/脚滑),是抑制面最大的一处。
             if (now > self.next_event and not self.singing
-                    and not self.focus_mode()):
+                    and not self._hush()):
                 self.next_event = now + random.uniform(7, 16)
                 # 整点前后先做时段问候(每个时段仅一次)
                 if self.greet_period():
@@ -5965,7 +6094,8 @@ class Pet:
                     self.start_peek()
                 else:
                     self._idle_event(now)
-            if just_approached and now > self._curious_cd and not self.bubble:
+            if (just_approached and now > self._curious_cd and not self.bubble
+                    and not self.dnd_active()):
                 self._curious_cd = now + 14
                 self._start_micro_motion("notice")
                 self.play_emotion("curious", 2.0)
@@ -5980,7 +6110,8 @@ class Pet:
             # R101 主动迎回:离开 30s~3min 后主动说句欢迎
             elif (just_approached and 30 < now - self.last_interact < 180
                     and not getattr(self, "_return_greeted", False)
-                    and self.state == "idle" and not self.bubble):
+                    and self.state == "idle" and not self.bubble
+                    and not self.dnd_active()):
                 self._return_greeted = True
                 self.say(random.choice([
                     "主人回来啦~", "终于回来了!好想你~", "欢迎回来~",
@@ -6516,7 +6647,7 @@ class Pet:
                           color=GOLD_L, phase=random.uniform(0, 6.28))
             # 流星本身留着 —— 无声划过是"窗外的夜在继续",不是打扰;
             # 台词是,所以专注时只闭嘴不撤景
-            if random.random() < 0.2 and not self.focus_mode():
+            if random.random() < 0.2 and not self._hush():
                 self.say("流星!快许愿~", 2.0)
 
         # 环境星光(她会随星光值变暗淡:能量低时周围的星星也稀疏些,
@@ -6561,7 +6692,7 @@ class Pet:
         # 专注期间必然满足"15 分钟没互动",但那是主人在干正事,不是冷落。
         # 不 guard 的话她会在专注到一半时说"哼,都不理我" —— 语义正好说反。
         if (now > self.next_whine and now - self.last_interact > 900
-                and not self.bubble and not self.focus_mode()):
+                and not self.bubble and not self._hush()):
             self.next_whine = now + 900
             if self.state == "sleep":
                 self.say(random.choice(SLEEP_WHINE_LINES), 3.2)

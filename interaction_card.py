@@ -127,7 +127,11 @@ class InteractionCard:
         if self.closed:
             return
         star = max(0, min(100, self.pet.star))
-        self.cv.itemconfigure(self.status, text=f'星光 {int(star)}%  ·  {self.pet.affection_level()}')
+        status = f'星光 {int(star)}%  ·  {self.pet.affection_level()}'
+        dnd = getattr(self.pet, 'dnd_active', None)
+        if dnd is not None and dnd():
+            status += '  ·  ☾ 勿扰中'   # 让人知道她为什么安静
+        self.cv.itemconfigure(self.status, text=status)
         self.cv.coords(self.energy,18*self.u,99*self.u,(18+284*star/100)*self.u,104*self.u)
         self.buttons['睡觉'].configure(text='叫醒' if self.pet.state in ('sleep','yawn') else '睡觉')
         reasons = self.disabled_reasons(self.pet)
