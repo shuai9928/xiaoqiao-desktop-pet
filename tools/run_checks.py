@@ -10,7 +10,8 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 UNITS=['test_action_fx','test_micro_motion','test_refinement','test_chat_ui',
-       'test_focus','test_feedback','test_recovery','test_depth']
+       'test_focus','test_feedback','test_recovery','test_depth',
+       'test_fullscreen']
 
 
 def main():
@@ -35,7 +36,8 @@ def main():
             'enabled':False,'api_key':'','greet_interval_min':0}),encoding='utf-8')
         (stage/'assets'/'memories.json').write_text('{"facts": []}',encoding='utf-8')
         (stage/'pet_settings.json').write_text(json.dumps({
-            'scale':1,'sound_on':False,'tts_on':False,'fg_watch':False}),encoding='utf-8')
+            'scale':1,'sound_on':False,'tts_on':False,'fg_watch':False,
+            'fs_avoid':False}),encoding='utf-8')
         env={k:v for k,v in os.environ.items() if k not in ('GEMINI_API_KEY','GOOGLE_API_KEY')}
         commands=[[sys.executable,'-X','utf8','-m','unittest',*UNITS,'-q'],
                   [sys.executable,'-X','utf8','test_agent.py']]

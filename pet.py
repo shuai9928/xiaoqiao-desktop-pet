@@ -210,7 +210,10 @@ def parse_mmdd(s):
     return mm, dd
 
 GREET = ["小乔回来啦~", "一起玩吧!", "嘿嘿,想我了吗?"]
-HELP = "点头摸摸·蹭蹭我·双击时间魔法·右键有提醒/找文件/剪贴板"
+# 启动提示:只在刚认识的头几天说(HELP_DAYS),之后每次开机都念一遍就成了噪音,
+# 还会在第 2.7 秒盖掉里程碑庆祝的气泡
+HELP = "摸头·挠痒·双击时间魔法·右键打开互动卡片"
+HELP_DAYS = 3
 IDLE_SAY = ["时间过得好快呀…", "要珍惜当下哟~", "在练习魔法哦",
             "别发呆啦,看看我嘛", "今天也是元气满满!", "星河很漂亮吧?",
             "今天的云朵好软呀~", "偷偷在练习新的魔法哦", "咦,时间又溜走了一点",
@@ -985,6 +988,12 @@ class Pet:
         self._catch_got = 0         # 已接住数
         self.catch_best = int(self.settings.get("catch_best", 0))  # 单局最高纪录
         self.battery_watch = bool(self.settings.get("battery_watch", True))
+        # 全屏避让:Windows 认为不该弹通知(全屏程序/游戏/演示)时先躲起来
+        self.fs_avoid = bool(self.settings.get("fs_avoid", True))
+        self._fs_next = 0.0             # 下次采样时间
+        self._fs_streak = 0             # 连续判定为全屏的次数(防一闪而过)
+        self._fs_hidden = False         # 是不是全屏避让藏起来的(不是托盘手动隐藏)
+        self._fs_user_shown = False     # 这次全屏期间主人又把她叫出来了,别再藏
         self._batt_prev = None          # 上一次采样的 (接着电源, 电量%)
         self._batt_next = 0.0           # 下次采样时间(每分钟一次)
         self._batt_star_cd = 0.0        # 插电送星光的冷却,防反复插拔刷星光
@@ -1184,10 +1193,18 @@ class Pet:
             self.sfx.play("levelup")
         else:
             self.say(random.choice(GREET), 2.4)
-        self.root.after(2700, lambda: self.say(HELP, 4))
+        if self.companion_days() <= HELP_DAYS:
+            self.root.after(2700, lambda: self.say(HELP, 4))
         self.start_tray()
-        # 首次启动且没有密钥 -> 引导填写(发布版不预置密钥)
-        if not selftest and self.brain and not self.brain.cfg.get("api_key"):
+        # 首次启动且没有密钥 -> 引导填写(发布版不预置密钥)。只主动弹一次:
+        # AI 是可选的,原来没填密钥就每次开机都弹 —— 开了开机自启的人每天
+        # 早上都要先关一次这个框。以后想用,在「设置 → 设置 AI 密钥…」里填。
+        # 环境变量里已有密钥也不必问(不走 brain.available,那会当场导入 SDK)
+        env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if (not selftest and self.brain and not self.brain.cfg.get("api_key")
+                and not env_key and not self.settings.get("ai_intro_shown")):
+            self.settings["ai_intro_shown"] = True
+            self.save_settings()
             self.root.after(2200, lambda: self.setup_api_key(first_run=True))
         # AI 库预热:google.genai 的 import 要一秒多,推迟到首次聊天才加载
         # 的话,第一句话会卡一下 —— 开机 25 秒后趁没人在意,后台补加载
@@ -1355,6 +1372,7 @@ class Pet:
                            "water_min": self.water_min,
                            "fg_watch": self.fg_watch,
                            "battery_watch": self.battery_watch,
+                           "fs_avoid": self.fs_avoid,
                            "tts_on": self.tts_on,
                            "tts_volume": self.tts_volume,
                            "sound_on": self.sound_on,
@@ -3865,6 +3883,8 @@ class Pet:
             self.hop(0.4)
 
     def _fire_reminder(self, text):
+        if getattr(self, "_fs_hidden", False):
+            self._fs_show(by_user=True)   # 全屏避让中:提醒是主人自己要的,得看得见
         self.sfx.play("notify")
         self.wake_if_sleep()
         self._reply(text, "excited")
@@ -4144,6 +4164,90 @@ class Pet:
         # 专注时和睡着时不打扰;事件本身已记下,不会攒着事后补报
         if ev and not self.focus_mode() and self.state not in ("sleep", "yawn"):
             self._battery_react(ev, cur[1])
+
+    # ---------- 全屏避让 ----------
+    # SHQueryUserNotificationState 的这几种状态下 Windows 自己也不弹通知:
+    # 2=前台是铺满屏幕的全屏程序(如全屏播放视频)、3=D3D 独占全屏、4=演示模式
+    QUNS_QUIET = (2, 3, 4)
+    FS_HIDE_STREAK = 2        # 连续两次采样(约 3 秒)都是全屏才躲,切窗口一闪不算
+    FS_POLL = 1.5
+
+    @staticmethod
+    def _notification_state():
+        """Windows 的用户通知状态码;读不到返回 None。"""
+        st = ctypes.c_int(0)
+        try:
+            if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(st)) != 0:
+                return None
+        except Exception:
+            return None
+        return st.value
+
+    @staticmethod
+    def _foreground_is_mine():
+        """前台窗口是不是本进程的(聊天窗、对话框、全屏魔法层)。"""
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            return pid.value == os.getpid()
+        except Exception:
+            return False
+
+    @classmethod
+    def _fs_step(cls, streak, quiet):
+        """(新连续次数, 该不该躲)。纯函数,方便测。"""
+        streak = streak + 1 if quiet else 0
+        return streak, streak >= cls.FS_HIDE_STREAK
+
+    def _fs_tick(self, now):
+        """主循环每帧调用(隐藏时也调),实际约 1.5 秒采样一次。"""
+        if now < self._fs_next:
+            return
+        self._fs_next = now + self.FS_POLL
+        if self._fs_hidden and self.pomo and now >= self.pomo["due"]:
+            # 番茄钟到点的播报在 _tick_body 里,藏着就一直不跑 —— 先出来
+            self._fs_show(by_user=True)
+            return
+        if not self.fs_avoid:
+            if self._fs_hidden:
+                self._fs_show()
+            return
+        # 前台是自己的窗口(聊天、对话框、全屏魔法)时不采样,免得把自己当成
+        # 全屏程序;施法期间同理
+        if self.state == "magic" or self._foreground_is_mine():
+            return
+        quiet = self._notification_state() in self.QUNS_QUIET
+        self._fs_streak, hide = self._fs_step(self._fs_streak, quiet)
+        if not quiet:
+            self._fs_user_shown = False
+            if self._fs_hidden:
+                self._fs_show()
+        elif (hide and not self._fs_hidden and not self._fs_user_shown
+                and not self._chat_open()
+                and self.root.state() != "withdrawn"):
+            # 聊天窗开着说明主人正在跟她说话,不躲;托盘手动隐藏的不归这里管
+            self._fs_hide()
+
+    def _fs_hide(self):
+        self.close_action_card()
+        self._fs_hidden = True
+        self.root.withdraw()
+
+    def _fs_show(self, by_user=False):
+        """从全屏避让里出来。by_user:主人叫她/有提醒要看,这次全屏期间不再躲。"""
+        if by_user:
+            self._fs_user_shown = True
+        if self._fs_hidden:
+            self._fs_hidden = False
+            self.root.deiconify()
+
+    def toggle_fs_avoid(self):
+        self.fs_avoid = not self.fs_avoid
+        self._fs_streak = 0
+        self.save_settings()
+        self.say("好,你全屏看视频、玩游戏或演示时,我先躲起来~" if self.fs_avoid
+                 else "好,全屏时我也留在这儿~", 2.8)
 
     def _battery_react(self, ev, pct):
         now = time.time()
@@ -5077,6 +5181,8 @@ class Pet:
                         command=self.toggle_fg_watch)
         cfg.add_command(label="电量提醒:" + ("开" if self.battery_watch else "关"),
                         command=self.toggle_battery_watch)
+        cfg.add_command(label="全屏时避让:" + ("开" if self.fs_avoid else "关"),
+                        command=self.toggle_fs_avoid)
         cfg.add_separator()
         szm = self._menu(cfg)
         for label, s in (("小 80%", 0.8), ("中 100%", 1.0), ("大 125%", 1.25),
@@ -5398,7 +5504,10 @@ class Pet:
 
     def toggle_visible(self):
         if self.root.state() == "withdrawn":
-            self.root.deiconify()
+            if getattr(self, "_fs_hidden", False):
+                self._fs_show(by_user=True)
+            else:
+                self.root.deiconify()
         else:
             self.root.withdraw()
 
@@ -5407,6 +5516,7 @@ class Pet:
         self._beat = time.time()   # 看门狗心跳:这一行能跑到,主循环就是活的
         delay = 33
         try:
+            self._fs_tick(time.time())
             if self.root.state() == "withdrawn":
                 self._pump()      # 托盘隐藏:整条渲染管线跳过,只泵消息
                 delay = 100       # 隐藏时只需要泵消息,不用 30Hz

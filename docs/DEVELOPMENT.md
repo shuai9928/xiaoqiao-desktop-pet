@@ -57,6 +57,7 @@ flowchart TD
 | 完整菜单与动态开关 | `Pet._build_menu()`、`start_tray()` |
 | 新动作和中途打断 | `start_*()`、`_begin_tl()`、`_play_timeline()`、`_tick_body()` |
 | 电量感知 | `_power_status()`、`_battery_event()`、`_battery_tick()` |
+| 全屏避让 | `_notification_state()`、`_fs_step()`、`_fs_tick()`；隐藏时 `_tick_body()` 不运行，需要看得见的事件（提醒、番茄钟）先调用 `_fs_show(by_user=True)` |
 | 互动奖励 | `gain_star()`；不要绕过它直接增加星光，否则缺少飘字反馈 |
 | 光环、法阵、冥想星核 | `fx.FX`、`_draw_meditate_orbs()`、`render()` |
 | 2.5D 变形与缓存 | `DepthWarp`、`DepthMotion`；同一姿态变形需覆盖五官 |
@@ -77,7 +78,7 @@ python tools/check_docs.py
 python tools/check_public_files.py
 ```
 
-`run_checks.py` 把所需代码与公开素材复制到临时目录，关闭 AI、去掉模型密钥环境变量、使用虚构设置。完整模式会短暂创建测试窗口并在结束后关闭。不要直接在日常运行目录执行 `test_pet.py`。
+`run_checks.py` 把所需代码与公开素材复制到临时目录，关闭 AI、去掉模型密钥环境变量、使用虚构设置（包括关闭全屏避让，免得运行机器的全屏状态把测试窗口藏起来）。完整模式会短暂创建测试窗口并在结束后关闭。不要直接在日常运行目录执行 `test_pet.py`。
 
 GitHub Actions 的 Windows checks 有两个 job：`checks` 运行公开文件检查和 `--unit-only`；`core-checks` 运行不带参数的完整隔离检查，包括 `test_pet.py` 核心集成，超时上限 20 分钟。
 
@@ -93,6 +94,7 @@ GitHub Actions 的 Windows checks 有两个 job：`checks` 运行公开文件检
 | `test_feedback.py` | 表情与互动反馈 |
 | `test_recovery.py` | 打断与姿态恢复 |
 | `test_depth.py` | 网格、姿态边界、透明度和缓存 |
+| `test_fullscreen.py` | 全屏避让的采样节流、连续判定、手动隐藏与托盘叫出、聊天窗、提醒和番茄钟唤出；打桩 Windows 通知状态 |
 | `test_agent.py` | 25 条意图样例、提醒解析、临时应用索引，不启动真实软件 |
 | `test_pet.py` | 完整角色集成、计数、电量、数据写入、命令与新特效等 |
 
