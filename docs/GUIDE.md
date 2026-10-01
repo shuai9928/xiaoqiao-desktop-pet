@@ -19,7 +19,7 @@ if (!(Test-Path assets\ai_config.json)) { Copy-Item assets\ai_config.example.jso
 .\.venv\Scripts\python.exe pet.py
 ```
 
-不配置密钥也能使用桌宠动作、语音、提醒和小游戏。程序运行后右键小乔打开互动卡片；“更多”可进入完整菜单，包括设置和退出。
+不配置密钥也能使用桌宠动作、语音、提醒和小游戏。第一次启动会弹出一次 AI 密钥引导，点“以后再说”后不会在之后的启动中再弹；需要时从 更多 → 设置 → 设置 AI 密钥… 填写。程序运行后右键小乔打开互动卡片；“更多”可进入完整菜单，包括设置和退出。
 
 第一次运行可按这条路线体验：**右键 → 喂糖 → 聊天输入“冥想” → 更多 → 小本事 → 番茄钟**。想理解今日小结、电量提醒与新特效，参照[图解手册](INTERACTIONS.md)。
 
@@ -62,9 +62,9 @@ AI 开启后，对话及相关记忆会发送给配置的模型服务；请求�
 ## 开发与测试
 
 ```powershell
-# 在临时副本运行，隔离个人数据并关闭真实 AI
+# 在临时副本运行，隔离个人数据并关闭真实 AI（CI 的 core-checks 也跑这一项）
 .\.venv\Scripts\python.exe tools\run_checks.py
-# 仅单元与模拟 UI 检查（供 CI 使用）
+# 仅单元与模拟 UI 检查（CI 的 checks 跑这一项）
 .\.venv\Scripts\python.exe tools\run_checks.py --unit-only
 # 发布前检查 Git 跟踪文件是否包含运行数据、密钥或本机路径
 .\.venv\Scripts\python.exe tools\check_public_files.py
@@ -75,6 +75,8 @@ AI 开启后，对话及相关记忆会发送给配置的模型服务；请求�
 | 文件 | 职责 |
 | --- | --- |
 | `pet.py` | 窗口、交互、状态机、聊天 UI、音效 |
+| `interaction_card.py` | 右键互动卡片 |
+| `ui_theme.py` | 面板与对话框的配色、字号 |
 | `depth_model.py` | 连续深度网格、部位跟随、光照与阴影缓存 |
 | `fx.py` | 法阵、粒子和特效缓存 |
 | `ai_chat.py` | 可选 AI、记忆、回复解析 |

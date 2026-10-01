@@ -209,6 +209,33 @@ _FILEISH = re.compile(
     r"zip|rar|7z|exe|lnk|mp3|mp4|wav|jpg|jpeg|png|gif|webp|sql|ipynb|iso)\b", re.I)
 _FILE_WORDS = re.compile(r"文件|文件夹|图片|视频|音乐|安装包", re.I)
 
+# 勿扰:必须先于通用 open/close 规则,不然「关闭勿扰」「打开勿扰」会被当成
+# 开关一个叫「勿扰」的程序;「别吵」带否定词,不在这里接住就会整句交给 AI
+_DND_END = r"(?:吧|了|啊|哦|呀)?[!!。.~\s]*$"
+_DND_ON = re.compile(
+    r"^(?:帮我|给我|请)?(?:打开|开启|开一?下|进入|来个|开)?\s*"
+    r"(?:勿扰|免打扰|安静|别吵|别说话)(?:模式|我|一会儿?|一下|点)?\s*"
+    r"(?P<dur>半个?小时|(?:\d+(?:\.\d+)?|一|两|二|三)\s*个?\s*(?:分钟|小时))?"
+    + _DND_END)
+_DND_OFF = re.compile(
+    r"^(?:(?:帮我|请)?(?:关闭|关掉|结束|取消|退出|解除|停止)\s*(?:勿扰|免打扰)(?:模式)?"
+    r"|(?:可以|能)说话|不用安静)" + _DND_END)
+_CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3}
+
+
+def _dnd_minutes(dur):
+    """「半小时」「2小时」「30分钟」「一个小时」-> 分钟数;没说时长给 None。"""
+    if not dur:
+        return None
+    dur = dur.replace(" ", "").replace("个", "")
+    if dur.startswith("半"):
+        return 30.0
+    m = re.match(r"(\d+(?:\.\d+)?|[一两二三])(分钟|小时)", dur)
+    if not m:
+        return None
+    n = _CN_NUM.get(m.group(1)) or float(m.group(1))
+    return float(n) * (60 if m.group(2) == "小时" else 1)
+
 
 def parse(text):
     """把一句话解析成意图。命中返回 dict,否则 None(交给 AI 兜底)。"""
@@ -231,6 +258,12 @@ def parse(text):
         r"番茄钟(?:模式|专注)?$", t)
     if m:
         return {"kind": "pomo", "target": "番茄钟", "raw": text}
+    if _DND_OFF.match(t):
+        return {"kind": "dnd", "target": "off", "raw": text}
+    m = _DND_ON.match(t)
+    if m:
+        return {"kind": "dnd", "target": "on",
+                "minutes": _dnd_minutes(m.group("dur")), "raw": text}
     m = re.match(r"^(?:帮我)?翻译(?:一下)?剪贴板$", t)
     if m:
         return {"kind": "translate", "target": "剪贴板", "raw": text}

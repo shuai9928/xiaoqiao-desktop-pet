@@ -27,6 +27,7 @@ import agent
 import fx
 from fx import transform_ribbons
 from depth_model import DepthWarp, DepthMotion
+from interaction_card import InteractionCard
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageGrab, ImageTk
 
@@ -183,29 +184,10 @@ STAR_COLORS = [(242, 193, 78), WHITE, (255, 178, 200), (159, 216, 255),
 INK = (46, 26, 82)
 
 # ---- tkinter 面板/对话框主题(上面那组 RGB 元组是给 PIL 画角色用的)----
-# 原来 29 处 #RRGGBB 散在各处:同一个暗紫底被写成 #221C40 和 #1D1838 两份
-# (复制粘贴出来的巧合),#EDE7FF 手打了 5 遍。这里收口成一套,顺便把那两个
-# 近似色明确成"面板底 / 抬起面板"两档,原来的巧合变成有意的层次。
-UI_BG       = "#1D1838"   # 面板底
-UI_PANEL    = "#221C40"   # 抬起的面板、对话框底
-UI_FIELD    = "#312A56"   # 输入框
-UI_BTN      = "#3C3268"   # 次要按钮
-UI_ACCENT   = "#7B5BD6"   # 主按钮 / 强调紫
-UI_TEXT     = "#EDE7FF"   # 主文字
-UI_TEXT_DIM = "#A99CD0"   # 次要文字
-UI_TITLE    = "#E8DCFF"   # 标题
-UI_WARN     = "#FFD98A"   # 校验提示
-UI_GOLD     = "#FFE9A0"   # 主按钮文字
-UI_DANGER   = "#FF9DB0"   # 关闭 / 危险
-UI_BORDER   = "#695782"   # 卡片、记录区和输入框的统一描边
-
-UI_FONT = "Microsoft YaHei UI"
-TYPE_TITLE, TYPE_BODY, TYPE_BTN, TYPE_HINT = 15, 14, 13, 10
-
-
-def ui_font(px, u=1.0, bold=False):
-    """统一字号阶梯。px 取 TYPE_* 档位,u 是按屏幕高度换算的 DPI 系数。"""
-    return (UI_FONT, -int(px * u)) + (("bold",) if bold else ())
+# 配色与字号收在 ui_theme.py,和独立出去的界面组件共用
+from ui_theme import (UI_ACCENT, UI_BG, UI_BORDER, UI_BTN, UI_DANGER,
+                      UI_FIELD, UI_GOLD, UI_PANEL, UI_TEXT, UI_TEXT_DIM,
+                      UI_TITLE, UI_WARN, TYPE_BODY, ui_font)
 
 
 _DATE_RE = re.compile(r"^\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*[日号]?\s*$")
@@ -228,7 +210,10 @@ def parse_mmdd(s):
     return mm, dd
 
 GREET = ["小乔回来啦~", "一起玩吧!", "嘿嘿,想我了吗?"]
-HELP = "点头摸摸·蹭蹭我·双击时间魔法·右键有提醒/找文件/剪贴板"
+# 启动提示:只在刚认识的头几天说(HELP_DAYS),之后每次开机都念一遍就成了噪音,
+# 还会在第 2.7 秒盖掉里程碑庆祝的气泡
+HELP = "摸头·挠痒·双击时间魔法·右键打开互动卡片"
+HELP_DAYS = 3
 IDLE_SAY = ["时间过得好快呀…", "要珍惜当下哟~", "在练习魔法哦",
             "别发呆啦,看看我嘛", "今天也是元气满满!", "星河很漂亮吧?",
             "今天的云朵好软呀~", "偷偷在练习新的魔法哦", "咦,时间又溜走了一点",
@@ -379,6 +364,7 @@ class SFX:
     """
 
     GLOBAL_CD = 5.0     # 任意两个音效之间的最小间隔(最多每 5 秒响一次)
+    HUSH_ALLOW = ("notify",)   # 勿扰中仍然出声的:提醒是主人自己定的
     CLOSE_DELAY = 0.5   # 播完再回收 alias 的余量(秒)
     CD = {              # 同名音效的最小重触发间隔(全局限频之外的安全网)
         "voice_happy": 0.7, "voice_giggle": 0.7, "voice_magic": 0.9,
@@ -395,6 +381,7 @@ class SFX:
         self._next_any = 0.0
         self._next = {}
         self._chan = {}     # 槽位 -> 当前 alias("main"=最新语音,"fx"=闪烁层)
+        self.hush = None    # 可选:返回 True 时只放行 HUSH_ALLOW 里的声音(勿扰)
         self.groups = {}
         for name, stems in SFX_FILES.items():
             files = [os.path.join(SFX_DIR, s + ".wav") for s in stems]
@@ -405,6 +392,8 @@ class SFX:
     def play(self, name, fx=False):
         """尝试播一个音效。返回 True=真的播了,False=被限频/关闭/失败跳过。"""
         if not self.enabled or name not in self.groups:
+            return False
+        if name not in self.HUSH_ALLOW and self.hush is not None and self.hush():
             return False
         try:
             now = time.time()
@@ -1003,6 +992,18 @@ class Pet:
         self._catch_got = 0         # 已接住数
         self.catch_best = int(self.settings.get("catch_best", 0))  # 单局最高纪录
         self.battery_watch = bool(self.settings.get("battery_watch", True))
+        # 全屏避让:Windows 认为不该弹通知(全屏程序/游戏/演示)时先躲起来
+        self.fs_avoid = bool(self.settings.get("fs_avoid", True))
+        self._fs_next = 0.0             # 下次采样时间
+        self._fs_streak = 0             # 连续判定为全屏的次数(防一闪而过)
+        self._fs_hidden = False         # 是不是全屏避让藏起来的(不是托盘手动隐藏)
+        self._fs_user_shown = False     # 这次全屏期间主人又把她叫出来了,别再藏
+        # 勿扰:到 dnd_until 为止,或每晚 NIGHT_DND 时段(night_dnd 开着时)
+        try:
+            self.dnd_until = float(self.settings.get("dnd_until") or 0.0)
+        except (TypeError, ValueError):
+            self.dnd_until = 0.0
+        self.night_dnd = bool(self.settings.get("night_dnd", False))
         self._batt_prev = None          # 上一次采样的 (接着电源, 电量%)
         self._batt_next = 0.0           # 下次采样时间(每分钟一次)
         self._batt_star_cd = 0.0        # 插电送星光的冷却,防反复插拔刷星光
@@ -1115,6 +1116,7 @@ class Pet:
         # 小音效(摸头/魔法/弹跳等)独立于 TTS 朗读,可在托盘或右键菜单关
         self.sound_on = bool(self.settings.get("sound_on", True))
         self.sfx = SFX(root)
+        self.sfx.hush = self.dnd_active
         self.sfx.enabled = self.sound_on
         self._speak_lock = threading.Lock()
         self.city = str(self.settings.get("city", ""))
@@ -1202,10 +1204,18 @@ class Pet:
             self.sfx.play("levelup")
         else:
             self.say(random.choice(GREET), 2.4)
-        self.root.after(2700, lambda: self.say(HELP, 4))
+        if self.companion_days() <= HELP_DAYS:
+            self.root.after(2700, lambda: self.say(HELP, 4))
         self.start_tray()
-        # 首次启动且没有密钥 -> 引导填写(发布版不预置密钥)
-        if not selftest and self.brain and not self.brain.cfg.get("api_key"):
+        # 首次启动且没有密钥 -> 引导填写(发布版不预置密钥)。只主动弹一次:
+        # AI 是可选的,原来没填密钥就每次开机都弹 —— 开了开机自启的人每天
+        # 早上都要先关一次这个框。以后想用,在「设置 → 设置 AI 密钥…」里填。
+        # 环境变量里已有密钥也不必问(不走 brain.available,那会当场导入 SDK)
+        env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if (not selftest and self.brain and not self.brain.cfg.get("api_key")
+                and not env_key and not self.settings.get("ai_intro_shown")):
+            self.settings["ai_intro_shown"] = True
+            self.save_settings()
             self.root.after(2200, lambda: self.setup_api_key(first_run=True))
         # AI 库预热:google.genai 的 import 要一秒多,推迟到首次聊天才加载
         # 的话,第一句话会卡一下 —— 开机 25 秒后趁没人在意,后台补加载
@@ -1373,6 +1383,9 @@ class Pet:
                            "water_min": self.water_min,
                            "fg_watch": self.fg_watch,
                            "battery_watch": self.battery_watch,
+                           "fs_avoid": self.fs_avoid,
+                           "dnd_until": round(self.dnd_until, 1),
+                           "night_dnd": self.night_dnd,
                            "tts_on": self.tts_on,
                            "tts_volume": self.tts_volume,
                            "sound_on": self.sound_on,
@@ -1543,7 +1556,7 @@ class Pet:
             # 自适应 —— 于是长台词也是 2.5 秒就蒸发。没显式指定时按阅读
             # 速度给足时间;显式传了 dur 的(猜拳倒计时 0.8 等)行为不变。
             dur = max(2.5, min(14.0, 1.2 + len(text) * 0.14))
-        if not keep and self.focus_mode():
+        if not keep and self._hush():
             # 专注陪伴中她把话说短:主人主动摸她当然要回应,但不占着屏幕
             # 不走。keep=True 的是提醒和 AI 回答 —— 那是主人自己要的内容,
             # 长度得按阅读速度来,不受此限。
@@ -3389,11 +3402,31 @@ class Pet:
         if not intent.get("_from_ai"):
             self._log_chat("user", intent["raw"])
         self.last_interact = time.time()
+        if intent.get("kind") == "dnd":
+            # 放在叫醒之前:睡着时说"勿扰"就让她接着睡,不必先叫醒再出声
+            if intent.get("target") == "off":
+                self.end_dnd()
+            else:
+                self.start_dnd(intent.get("minutes") or 60)
+            return
         if self.state == "sleep":
             self.wake_up()
         # 提醒/剪贴板/找文件/看屏幕/番茄钟/翻译需要定时器、线程、Tk 或截屏,
         # pet.py 自己处理,不走 agent.execute(那边只做纯系统操作)
         kind = intent.get("kind")
+        # 模型自己决定要截屏/读剪贴板/开关程序时,先问人:这几样会把本机内容
+        # 发出去或动到别的程序,不能只凭模型一句 intent 就做。本地规则识别的
+        # 原话是主人亲口下的指令,照旧直接执行。取消或关掉确认框一律不做。
+        if intent.get("_from_ai") and kind in self.AI_CONFIRM_KINDS:
+            if not self._confirm_ai_intent(intent):
+                self._reply("好,那就不动它~", "mild")
+                return
+            if kind == "screen":
+                # 确认框刚销毁,下面的窗口可能还没重绘完;稍等再截,
+                # 别把确认框的残影一起截进去发出去
+                q = intent.get("target") or ""
+                self.root.after(300, lambda: self.look_screen(q))
+                return
         if kind == "remind":
             self._schedule_reminder(intent.get("minutes"), intent.get("target"))
             return
@@ -3425,6 +3458,46 @@ class Pet:
             self.mainq.put(lambda: self._finish_agent(res))
 
         self._run_bg(work)
+
+    # AI 发起时必须先确认的意图:会把屏幕/剪贴板发给模型服务,或启动/关闭
+    # 本机程序(搜索会拉起浏览器并把关键词发给必应)。卸载另有确认,见 _finish_agent
+    AI_CONFIRM_KINDS = ("screen", "clipboard", "translate", "open", "close",
+                        "search")
+
+    def _confirm_ai_intent(self, intent):
+        """AI 发起的敏感操作:讲清要做什么、发什么给谁,主人点头才返回 True。"""
+        kind = intent.get("kind")
+        target = str(intent.get("target") or "").strip()[:60]
+        tail = "\n\n点「算了」或关闭此窗口,就什么都不做。"
+        if kind == "screen":
+            q = "" if target in ("", "看看", "screen") else target
+            title, yes = "小乔 · 确认看屏幕", "截图并发送"
+            text = ("AI 想看一眼你的屏幕" + (f",回答:「{q}」" if q else "") + "。\n\n"
+                    "同意后会截取主屏幕当前的完整画面(缩小为 JPEG),"
+                    "发送给 Google Gemini。屏幕上显示的所有内容都会被一起发送。")
+        elif kind in ("clipboard", "translate"):
+            what = "总结" if kind == "clipboard" else "翻译"
+            title, yes = f"小乔 · 确认{what}剪贴板", "读取并发送"
+            text = (f"AI 想{what}你剪贴板里的文字。\n\n"
+                    "同意后会读取剪贴板中的文字(最多前 8000 字),"
+                    f"发送给 Google Gemini 做{what}。")
+        elif kind == "open":
+            title, yes = "小乔 · 确认打开程序", "打开"
+            text = (f"AI 想在你的电脑上启动程序「{target}」。\n\n"
+                    "会按这个名字在开始菜单、桌面快捷方式和系统常用程序里查找;"
+                    "找到多个相近的就不会启动。不会向外发送任何内容。")
+        elif kind == "close":
+            title, yes = "小乔 · 确认关闭程序", "关闭"
+            text = (f"AI 想关闭程序「{target}」。\n\n"
+                    "会向所有同名进程的主窗口发送关闭请求(相当于点窗口的关闭"
+                    "按钮,程序可能会提示保存),不会强制结束。不会向外发送任何内容。")
+        elif kind == "search":
+            title, yes = "小乔 · 确认网页搜索", "搜索"
+            text = (f"AI 想帮你搜索「{target}」。\n\n"
+                    "同意后会打开默认浏览器,把这个关键词发送给必应(Bing)搜索。")
+        else:
+            return False
+        return self.themed_confirm(title, text + tail, yes=yes, no="算了")
 
     def _finish_agent(self, res):
         # 卸载是不可逆的,必须人点头才继续
@@ -3830,6 +3903,8 @@ class Pet:
             self.hop(0.4)
 
     def _fire_reminder(self, text):
+        if getattr(self, "_fs_hidden", False):
+            self._fs_show(by_user=True)   # 全屏避让中:提醒是主人自己要的,得看得见
         self.sfx.play("notify")
         self.wake_if_sleep()
         self._reply(text, "excited")
@@ -3851,6 +3926,16 @@ class Pet:
         if text is None:
             return
         self._schedule_reminder(mins, text)
+
+    def _water_tick(self, now):
+        if self.water_min <= 0 or now < self.water_next:
+            return
+        if self.dnd_active(now):
+            # 周期性的催促不算主人亲自定的提醒:勿扰中先不催,结束后一分钟内补一次
+            self.water_next = now + 60
+            return
+        self.water_next = now + self.water_min * 60
+        self._fire_reminder("该喝水啦!顺便起来动一动~")
 
     def set_water_reminder(self, minutes):
         self.water_min = int(minutes)
@@ -4053,6 +4138,8 @@ class Pet:
             self._fg_say_on(f"代码写了 {int(span // 60)} 分钟啦,起来走走,我看着你", title)
 
     def _fg_say_on(self, fallback, title):
+        if self.dnd_active():
+            return
         # 有 AI 就结合窗口标题说得有鼻子有眼,没 AI 就说固定台词
         if self.brain and self.brain.available and random.random() < 0.6:
             self._ai_quick(f"主人的前台窗口标题是「{title[:80]}」。"
@@ -4107,8 +4194,171 @@ class Pet:
         ev = self._battery_event(self._batt_prev, cur)
         self._batt_prev = cur
         # 专注时和睡着时不打扰;事件本身已记下,不会攒着事后补报
-        if ev and not self.focus_mode() and self.state not in ("sleep", "yawn"):
+        if ev and not self._hush() and self.state not in ("sleep", "yawn"):
             self._battery_react(ev, cur[1])
+
+    # ---------- 全屏避让 ----------
+    # SHQueryUserNotificationState 的这几种状态下 Windows 自己也不弹通知:
+    # 2=前台是铺满屏幕的全屏程序(如全屏播放视频)、3=D3D 独占全屏、4=演示模式
+    QUNS_QUIET = (2, 3, 4)
+    FS_HIDE_STREAK = 2        # 连续两次采样(约 3 秒)都是全屏才躲,切窗口一闪不算
+    FS_POLL = 1.5
+
+    @staticmethod
+    def _notification_state():
+        """Windows 的用户通知状态码;读不到返回 None。"""
+        st = ctypes.c_int(0)
+        try:
+            if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(st)) != 0:
+                return None
+        except Exception:
+            return None
+        return st.value
+
+    @staticmethod
+    def _foreground_is_mine():
+        """前台窗口是不是本进程的(聊天窗、对话框、全屏魔法层)。"""
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            return pid.value == os.getpid()
+        except Exception:
+            return False
+
+    @classmethod
+    def _fs_step(cls, streak, quiet):
+        """(新连续次数, 该不该躲)。纯函数,方便测。"""
+        streak = streak + 1 if quiet else 0
+        return streak, streak >= cls.FS_HIDE_STREAK
+
+    def _fs_tick(self, now):
+        """主循环每帧调用(隐藏时也调),实际约 1.5 秒采样一次。"""
+        if now < self._fs_next:
+            return
+        self._fs_next = now + self.FS_POLL
+        if self._fs_hidden and self.pomo and now >= self.pomo["due"]:
+            # 番茄钟到点的播报在 _tick_body 里,藏着就一直不跑 —— 先出来
+            self._fs_show(by_user=True)
+            return
+        if not self.fs_avoid:
+            if self._fs_hidden:
+                self._fs_show()
+            return
+        # 前台是自己的窗口(聊天、对话框、全屏魔法)时不采样,免得把自己当成
+        # 全屏程序;施法期间同理
+        if self.state == "magic" or self._foreground_is_mine():
+            return
+        quiet = self._notification_state() in self.QUNS_QUIET
+        self._fs_streak, hide = self._fs_step(self._fs_streak, quiet)
+        if not quiet:
+            self._fs_user_shown = False
+            if self._fs_hidden:
+                self._fs_show()
+        elif (hide and not self._fs_hidden and not self._fs_user_shown
+                and not self._chat_open()
+                and self.root.state() != "withdrawn"):
+            # 聊天窗开着说明主人正在跟她说话,不躲;托盘手动隐藏的不归这里管
+            self._fs_hide()
+
+    def _fs_hide(self):
+        self.close_action_card()
+        self._fs_hidden = True
+        self.root.withdraw()
+
+    def _fs_show(self, by_user=False):
+        """从全屏避让里出来。by_user:主人叫她/有提醒要看,这次全屏期间不再躲。"""
+        if by_user:
+            self._fs_user_shown = True
+        if self._fs_hidden:
+            self._fs_hidden = False
+            self.root.deiconify()
+
+    # ---------- 勿扰 ----------
+    NIGHT_DND = (23, 7)       # 夜间勿扰:23:00 到次日 7:00
+
+    @classmethod
+    def _night_key(cls, lt):
+        """lt 落在哪一晚的夜间勿扰里(用这一晚开始那天的日期标识);不在时段内返回 None。"""
+        start, end = cls.NIGHT_DND
+        if lt.tm_hour >= start:
+            return time.strftime("%Y-%m-%d", lt)
+        if lt.tm_hour < end:
+            return time.strftime("%Y-%m-%d", time.localtime(time.mktime(lt) - 86400))
+        return None
+
+    def dnd_active(self, now=None):
+        """勿扰中吗?手动定时没到期,或夜间勿扰开着、正在时段内且今晚没被主人提前结束。
+
+        用 getattr 读字段:几个 unittest 文件用 Pet.__new__ 造壳桌宠、不跑
+        __init__,而 say() 会经 _hush() 调到这里。
+        """
+        now = time.time() if now is None else now
+        if now < getattr(self, "dnd_until", 0.0):
+            return True
+        if not getattr(self, "night_dnd", False):
+            return False
+        key = self._night_key(time.localtime(now))
+        return key is not None and key != getattr(self, "settings", {}).get("night_skip")
+
+    def _hush(self):
+        """此刻不该主动开口:番茄钟专注中,或勿扰中。"""
+        return self.focus_mode() or self.dnd_active()
+
+    def _dnd_end_at(self, now):
+        """勿扰实际持续到哪一刻:手动定时和今晚的夜间时段取较晚的那个。"""
+        end = self.dnd_until if now < self.dnd_until else 0.0
+        if self.night_dnd:
+            key = self._night_key(time.localtime(now))
+            if key and key != self.settings.get("night_skip"):
+                d = time.strptime(key, "%Y-%m-%d")
+                end = max(end, time.mktime((d.tm_year, d.tm_mon, d.tm_mday + 1,
+                                            self.NIGHT_DND[1], 0, 0, 0, 0, -1)))
+        return end
+
+    def _dnd_end_text(self, now=None):
+        now = time.time() if now is None else now
+        return time.strftime("%H:%M", time.localtime(self._dnd_end_at(now)))
+
+    def start_dnd(self, minutes=60):
+        minutes = max(1, min(int(minutes), 12 * 60))
+        self.dnd_until = time.time() + minutes * 60
+        self.save_settings()
+        self._reply(f"好,{self._dnd_end_text()} 之前我安静陪着你,不主动说话、不出声~"
+                    "提醒到点还是会叫你。", "roger")
+
+    def end_dnd(self):
+        was = self.dnd_active()
+        self.dnd_until = 0.0
+        key = self._night_key(time.localtime())
+        if self.night_dnd and key:
+            self.settings["night_skip"] = key   # 只结束今晚这一段,明晚照常
+        self.save_settings()
+        if was:
+            self._reply("好~我回来啦,有事随时叫我!", "happy")
+        else:
+            self._reply("现在没有在勿扰哦~", "curious")
+
+    def toggle_night_dnd(self):
+        self.night_dnd = not self.night_dnd
+        self.settings.pop("night_skip", None)
+        self.save_settings()
+        start, end = self.NIGHT_DND
+        self.say(f"好,每晚 {start}:00 到早上 {end}:00 我都安静陪着你~" if self.night_dnd
+                 else "好,夜里我也照常陪你聊~", 2.8)
+
+    def _tray_dnd(self):
+        if self.dnd_active():
+            self.end_dnd()
+        else:
+            self.start_dnd(60)
+
+    def toggle_fs_avoid(self):
+        self.fs_avoid = not self.fs_avoid
+        self._fs_streak = 0
+        self.save_settings()
+        self.say("好,你全屏看视频、玩游戏或演示时,我先躲起来~" if self.fs_avoid
+                 else "好,全屏时我也留在这儿~", 2.8)
 
     def _battery_react(self, ev, pct):
         now = time.time()
@@ -4175,7 +4425,7 @@ class Pet:
         today = time.strftime("%Y-%m-%d")
         if (time.localtime().tm_hour >= 21 and self.settings.get("summary_day") != today
                 and self.state == "idle" and not self.bubble and not self.drag
-                and not self.focus_mode() and now - self.last_interact > 20):
+                and not self._hush() and now - self.last_interact > 20):
             self.settings["summary_day"] = today
             s = self._today_summary()
             if s:
@@ -4234,7 +4484,7 @@ class Pet:
         这样"她说话"和"她的反应音"才像同一个人。合成不了(没装 venv / 断网 /
         超时)才退回系统 SAPI,那条路是机器音,只当兜底。
         """
-        if not self.tts_on or not self.sound_on or not text:
+        if not self.tts_on or not self.sound_on or not text or self.dnd_active():
             return
         text = " ".join(str(text).split())[:120]
         if not text:
@@ -4897,7 +5147,8 @@ class Pet:
         self.last_interact = time.time()
         self.close_action_card()
         try:
-            self.action_card = InteractionCard(self, x, y)
+            area = work_area_at(x, y) or (0, 0, self.sw, self.sh)
+            self.action_card = InteractionCard(self, x, y, area)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -4971,6 +5222,19 @@ class Pet:
                                 variable=self._magic_style_var)
         m.add_cascade(label="⏳ 时间魔法 ▸", menu=magic_m)
         m.add_command(label="✦ 和小乔聊天", command=self.open_chat)
+        dnd = self._menu(m)
+        quiet = self.dnd_active()
+        if quiet:
+            dnd.add_command(label=f"勿扰中,到 {self._dnd_end_text()}", state="disabled")
+            dnd.add_command(label="现在结束勿扰", command=self.end_dnd)
+            dnd.add_separator()
+        for label, mins in (("安静 30 分钟", 30), ("安静 1 小时", 60), ("安静 2 小时", 120)):
+            dnd.add_command(label=label, command=lambda v=mins: self.start_dnd(v))
+        dnd.add_separator()
+        dnd.add_command(label=(f"每晚 {self.NIGHT_DND[0]}:00–{self.NIGHT_DND[1]}:00 自动勿扰:"
+                               + ("开" if self.night_dnd else "关")),
+                        command=self.toggle_night_dnd)
+        m.add_cascade(label=("☾ 勿扰中 ▸" if quiet else "☾ 勿扰 ▸"), menu=dnd)
         m.add_command(label=("停止唱歌" if self.singing else "唱首歌 ♪"),
                       command=self.sing)
 
@@ -5041,6 +5305,8 @@ class Pet:
                         command=self.toggle_fg_watch)
         cfg.add_command(label="电量提醒:" + ("开" if self.battery_watch else "关"),
                         command=self.toggle_battery_watch)
+        cfg.add_command(label="全屏时避让:" + ("开" if self.fs_avoid else "关"),
+                        command=self.toggle_fs_avoid)
         cfg.add_separator()
         szm = self._menu(cfg)
         for label, s in (("小 80%", 0.8), ("中 100%", 1.0), ("大 125%", 1.25),
@@ -5259,6 +5525,8 @@ class Pet:
                 pystray.MenuItem("随机表情", lambda: self.post(self.random_emotion)),
                 pystray.MenuItem(lambda item: "语音:开" if self.sound_on else "语音:关",
                                  lambda: self.post(self.toggle_sound)),
+                pystray.MenuItem(lambda item: "结束勿扰" if self.dnd_active() else "勿扰 1 小时",
+                                 lambda: self.post(self._tray_dnd)),
                 pystray.MenuItem("退出", lambda: self.post(self.quit)))
             self._tray = pystray.Icon("xiaoqiao", icon_img, "小乔·时之魔女", menu)
             threading.Thread(target=self._tray.run, daemon=True).start()
@@ -5352,6 +5620,7 @@ class Pet:
                 "quiet_idle": self._quiet_idle_ok(),
                 "quiet_block": getattr(self, "_quiet_block", ""),
                 "focus": self.focus_mode(),
+                "dnd": self.dnd_active(),
                 "particles": len(self.parts),
                 "warp_cache": len(self._warp_cache),
             }
@@ -5362,7 +5631,10 @@ class Pet:
 
     def toggle_visible(self):
         if self.root.state() == "withdrawn":
-            self.root.deiconify()
+            if getattr(self, "_fs_hidden", False):
+                self._fs_show(by_user=True)
+            else:
+                self.root.deiconify()
         else:
             self.root.withdraw()
 
@@ -5371,6 +5643,7 @@ class Pet:
         self._beat = time.time()   # 看门狗心跳:这一行能跑到,主循环就是活的
         delay = 33
         try:
+            self._fs_tick(time.time())
             if self.root.state() == "withdrawn":
                 self._pump()      # 托盘隐藏:整条渲染管线跳过,只泵消息
                 delay = 100       # 隐藏时只需要泵消息,不用 30Hz
@@ -5629,7 +5902,7 @@ class Pet:
         # 不然玩家根本不会知道要去右键喂糖
         if self.star < 25 and prev_star >= 25 and not self._star_warned:
             self._star_warned = True
-            if self.state != "sleep":
+            if self.state != "sleep" and not self.dnd_active():
                 self.say(random.choice(HUNGRY_SAY), 3.0)
                 self.play_emotion("tired", 2.6)
         if self.star >= 50:
@@ -5688,6 +5961,9 @@ class Pet:
             # 专注期间不主动搭话;把下次时间推到这段结束之后,免得一收工
             # 就立刻蹦一句出来(那比中途说话更突兀)
             self.next_greet = max(self.next_greet, self.pomo["due"] + 60)
+        elif self.dnd_active():
+            # 勿扰期间一直往后推:结束后至少再过一分钟才可能搭话
+            self.next_greet = max(self.next_greet, now + 60)
         elif (self._ai_ready()
                 and self.state in ("idle", "sticker")
                 and now > self.next_greet):
@@ -5704,9 +5980,7 @@ class Pet:
                 self._save_reminders()
                 for r in due:
                     self._fire_reminder(r.get("text", "时间到啦~"))
-        if self.water_min > 0 and now >= self.water_next:
-            self.water_next = now + self.water_min * 60
-            self._fire_reminder("该喝水啦!顺便起来动一动~")
+        self._water_tick(now)
 
         # 专注陪伴:安静地冒几点星光,不说话
         self._focus_tick(now)
@@ -5785,6 +6059,7 @@ class Pet:
         if (self.state == "idle" and not self.singing
                 and now - self.last_interact > 30
                 and not self.bubble
+                and not self._hush()
                 and now > getattr(self, "_idle_mumble_cd", 0)):
             self._idle_mumble_cd = now + random.uniform(60, 120)
             if random.random() < 0.03:
@@ -5806,7 +6081,7 @@ class Pet:
             # 跳舞、探头和整个 _idle_event(走动/贴纸/闲聊/哼歌/吹泡泡/
             # 打喷嚏/脚滑),是抑制面最大的一处。
             if (now > self.next_event and not self.singing
-                    and not self.focus_mode()):
+                    and not self._hush()):
                 self.next_event = now + random.uniform(7, 16)
                 # 整点前后先做时段问候(每个时段仅一次)
                 if self.greet_period():
@@ -5819,7 +6094,8 @@ class Pet:
                     self.start_peek()
                 else:
                     self._idle_event(now)
-            if just_approached and now > self._curious_cd and not self.bubble:
+            if (just_approached and now > self._curious_cd and not self.bubble
+                    and not self.dnd_active()):
                 self._curious_cd = now + 14
                 self._start_micro_motion("notice")
                 self.play_emotion("curious", 2.0)
@@ -5834,7 +6110,8 @@ class Pet:
             # R101 主动迎回:离开 30s~3min 后主动说句欢迎
             elif (just_approached and 30 < now - self.last_interact < 180
                     and not getattr(self, "_return_greeted", False)
-                    and self.state == "idle" and not self.bubble):
+                    and self.state == "idle" and not self.bubble
+                    and not self.dnd_active()):
                 self._return_greeted = True
                 self.say(random.choice([
                     "主人回来啦~", "终于回来了!好想你~", "欢迎回来~",
@@ -6370,7 +6647,7 @@ class Pet:
                           color=GOLD_L, phase=random.uniform(0, 6.28))
             # 流星本身留着 —— 无声划过是"窗外的夜在继续",不是打扰;
             # 台词是,所以专注时只闭嘴不撤景
-            if random.random() < 0.2 and not self.focus_mode():
+            if random.random() < 0.2 and not self._hush():
                 self.say("流星!快许愿~", 2.0)
 
         # 环境星光(她会随星光值变暗淡:能量低时周围的星星也稀疏些,
@@ -6415,7 +6692,7 @@ class Pet:
         # 专注期间必然满足"15 分钟没互动",但那是主人在干正事,不是冷落。
         # 不 guard 的话她会在专注到一半时说"哼,都不理我" —— 语义正好说反。
         if (now > self.next_whine and now - self.last_interact > 900
-                and not self.bubble and not self.focus_mode()):
+                and not self.bubble and not self._hush()):
             self.next_whine = now + 900
             if self.state == "sleep":
                 self.say(random.choice(SLEEP_WHINE_LINES), 3.2)
@@ -7443,205 +7720,6 @@ class Pet:
 
 
 # ==================== 聊天面板(大幅扩大的魔法风)====================
-class InteractionCard:
-    """用户右键唤出的不透明卡片;不会常驻,动作仍由 Pet 统一处理。"""
-
-    HINTS = {'聊天':'聊聊天，或让我帮你做点事', '喂糖':'吃颗糖，最多补充 40 点星光',
-             '时间魔法':'施放你选好的时间魔法', '跳舞':'跟着星光跳一支舞',
-             '玩球':'光球出现后，点它就能接住', '睡觉':'打个哈欠，安心休息一会儿'}
-
-    @staticmethod
-    def disabled_reasons(pet):
-        reasons = {}
-        if pet.state in ('magic','eat'):
-            reason = '等这次魔法结束，再点我吧' if pet.state=='magic' else '先让我吃完这颗糖~'
-            reasons.update({'喂糖':reason, '时间魔法':reason})
-        if pet.state in ('fly','fall'):
-            reasons.update({key:'等我落稳，再一起玩~' for key in ('喂糖','时间魔法','跳舞')})
-        if pet.state in ('sleep','yawn'):
-            reasons['玩球'] = '先叫醒小乔，再一起接光球'
-        elif getattr(pet,'singing',False):
-            reasons['睡觉'] = '先在「更多」里停止唱歌，再休息'
-        return reasons
-
-    @staticmethod
-    def position(x, y, w, h, area):
-        left, top, right, bottom = area
-        return (int(max(left+8, min(x, right-w-8))),
-                int(max(top+8, min(y, bottom-h-8))))
-
-    def __init__(self, pet, x, y):
-        self.pet = pet
-        self.closed = False
-        self._refresh_id = self._focus_id = None
-        self.win = tk.Toplevel(pet.root)
-        self.win.withdraw()
-        try:
-            self._build(x, y)
-        except Exception:
-            self.win.destroy()
-            raise
-
-    def _build(self, x, y):
-        pet, win = self.pet, self.win
-        area = work_area_at(x, y) or (0, 0, pet.sw, pet.sh)
-        u = max(1.0, min(1.5, (area[3]-area[1])/1080))
-        w, h = int(320*u), int(384*u)
-        self.u = u
-        x, y = self.position(x+8, y+8, w, h, area)
-        win.title('小乔 · 互动卡片')
-        win.overrideredirect(True)
-        win.attributes('-topmost', True)
-        win.configure(bg=UI_BG)
-        win.geometry(f'{w}x{h}+{x}+{y}')
-        self.cv = cv = tk.Canvas(win, bg=UI_BG, highlightthickness=0, bd=0)
-        cv.pack(fill='both', expand=True)
-        # 不使用透明窗口;内部轮廓以平滑折线构成圆角。
-        r, pad = 16*u, 2*u
-        cv.create_polygon(pad+r,pad, w-pad-r,pad, w-pad,pad, w-pad,pad+r,
-                          w-pad,h-pad-r, w-pad,h-pad, w-pad-r,h-pad,
-                          pad+r,h-pad, pad,h-pad, pad,h-pad-r, pad,pad+r,pad,pad,
-                          smooth=True, splinesteps=24, fill=UI_PANEL, outline=UI_BORDER, width=1)
-        cv.create_text(18*u, 28*u, anchor='w', text='小乔 · 时之魔女',
-                       font=ui_font(18,u,True), fill=UI_TITLE)
-        cv.create_text(18*u, 53*u, anchor='w', text=f'陪伴第 {pet.companion_days()} 天',
-                       font=ui_font(11,u), fill=UI_TEXT_DIM)
-        # 小时钟标记,静态装饰避免无意义常驻动画。
-        cx, cy = 282*u, 38*u
-        cv.create_oval(cx-16*u,cy-16*u,cx+16*u,cy+16*u,outline=UI_GOLD,width=1)
-        cv.create_line(cx,cy-10*u,cx,cy,cx+7*u,cy+4*u,fill=UI_GOLD,width=2)
-        self.status = cv.create_text(18*u, 82*u, anchor='w', font=ui_font(11,u), fill=UI_GOLD)
-        cv.create_rectangle(18*u,99*u,302*u,104*u,fill=UI_FIELD,outline='')
-        self.energy = cv.create_rectangle(18*u,99*u,18*u,104*u,fill=UI_GOLD,outline='')
-        self._hint_key = None
-        self.hint = cv.create_text(18*u,128*u,anchor='w',text=self._default_hint(),font=ui_font(11,u),fill=UI_TEXT_DIM)
-        grid = tk.Frame(win, bg=UI_PANEL)
-        cv.create_window(16*u,146*u,anchor='nw',window=grid,width=288*u,height=170*u)
-        grid.columnconfigure((0,1), weight=1, uniform='actions')
-        self.buttons = {}
-        choices = [('聊天', pet.open_chat), ('喂糖', pet.eat_candy),
-                   ('时间魔法', pet.cast_magic), ('跳舞', pet.start_dance),
-                   ('玩球', pet.throw_ball), ('睡觉', self._sleep)]
-        for i, (label, action) in enumerate(choices):
-            grid.rowconfigure(i//2, weight=1, uniform='actions')
-            button = self._button(grid, label, lambda fn=action,key=label: self._run(fn,key))
-            button.bind('<Enter>',lambda e,key=label:self._show_hint(key),add='+')
-            button.bind('<FocusIn>',lambda e,key=label:self._focus_hint(key))
-            button.bind('<Leave>',lambda e:self._show_hint(None),add='+')
-            button.grid(row=i//2,column=i%2,sticky='nsew',padx=3*u,pady=4*u)
-            self.buttons[label] = button
-        footer = tk.Frame(win, bg=UI_PANEL)
-        cv.create_window(18*u,334*u,anchor='nw',window=footer,width=284*u,height=32*u)
-        self._button(footer, '更多  ›', self._more).pack(side='left',fill='y',ipadx=12*u)
-        self._button(footer, '关闭  Esc', self.close).pack(side='right',fill='y',ipadx=8*u)
-        win.bind('<Escape>', lambda e: self.close())
-        win.bind('<FocusOut>', self._on_focus_out)
-        win.protocol('WM_DELETE_WINDOW', self.close)
-        self._refresh()
-        win.deiconify()
-        win.lift()
-        # 打开时程序自动把焦点给「聊天」,这一下别用按钮说明盖掉今日小结
-        self._auto_focus = True
-        self._auto_focus_id = win.after(250, self._end_auto_focus)
-        self.buttons['聊天'].focus_force()
-
-    def _button(self, parent, text, action):
-        b = tk.Button(parent, text=text, command=action, font=ui_font(13,self.u,True),
-                      bg=UI_BTN, fg=UI_TEXT, activebackground=UI_ACCENT, activeforeground=UI_GOLD,
-                      disabledforeground=UI_TEXT_DIM,
-                      relief='flat', bd=0, cursor='hand2', takefocus=True,
-                      highlightthickness=1, highlightbackground=UI_BTN, highlightcolor=UI_GOLD)
-        b.bind('<Enter>', lambda e: b.configure(bg=UI_ACCENT if str(b['state'])!='disabled' else UI_BTN))
-        b.bind('<Leave>', lambda e: b.configure(bg=UI_BTN))
-        b.bind('<Return>', lambda e: (b.invoke(), 'break')[1])
-        return b
-
-    def _refresh(self):
-        if self.closed:
-            return
-        star = max(0, min(100, self.pet.star))
-        self.cv.itemconfigure(self.status, text=f'星光 {int(star)}%  ·  {self.pet.affection_level()}')
-        self.cv.coords(self.energy,18*self.u,99*self.u,(18+284*star/100)*self.u,104*self.u)
-        self.buttons['睡觉'].configure(text='叫醒' if self.pet.state in ('sleep','yawn') else '睡觉')
-        reasons = self.disabled_reasons(self.pet)
-        for key, button in self.buttons.items():
-            button.configure(state='disabled' if key in reasons else 'normal')
-            if key in reasons:
-                button.configure(bg=UI_BTN)
-        self._show_hint(self._hint_key)
-        self._refresh_id = self.win.after(400, self._refresh)
-
-    def _focus_hint(self, key):
-        """Tab 切焦点时显示按钮说明;打开卡片瞬间的程序自动聚焦除外。"""
-        if getattr(self, '_auto_focus', False):
-            return
-        self._show_hint(key)
-
-    def _end_auto_focus(self):
-        self._auto_focus = False
-
-    def _default_hint(self):
-        """没悬停按钮时显示今天的陪伴小结(最多三项,卡片放不下更多)。"""
-        s = self.pet._today_summary(limit=3)
-        return f'今天 · {s}' if s else '一起度过这会儿'
-
-    def _show_hint(self, key):
-        if self.closed:
-            return
-        self._hint_key = key
-        reason = self.disabled_reasons(self.pet).get(key)
-        hint = self.HINTS.get(key, self._default_hint())
-        if key=='睡觉' and self.pet.state in ('sleep','yawn'):
-            hint = '轻轻叫醒，等她慢慢回过神'
-        self.cv.itemconfigure(self.hint,text=reason or hint,fill=UI_GOLD if reason else UI_TEXT_DIM)
-
-    def _sleep(self):
-        if self.pet.state in ('sleep', 'yawn'):
-            self.pet.wake_up()
-        else:
-            self.pet.go_sleep()
-
-    def _run(self, action, key=None):
-        if self.closed:
-            return
-        if key in self.disabled_reasons(self.pet):
-            self._show_hint(key)
-            return
-        self.close()
-        action()
-
-    def _more(self):
-        x, y = self.win.winfo_x()+int(18*self.u), self.win.winfo_y()+int(334*self.u)
-        self.close()
-        self.pet._show_full_menu(x, y)
-
-    def _on_focus_out(self, event):
-        if not self.closed and self._focus_id is None:
-            self._focus_id = self.win.after_idle(self._check_focus)
-
-    def _check_focus(self):
-        self._focus_id = None
-        if self.closed:
-            return
-        focused = self.win.focus_displayof()
-        if focused is None or focused.winfo_toplevel() != self.win:
-            self.close()
-
-    def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        # 自动聚焦的 250ms 定时器也要撤:卡片 250ms 内被关掉时(测试里很常见)
-        # 它会对已销毁的窗口触发,Tcl 报 invalid command name
-        for timer in (self._refresh_id, self._focus_id,
-                      getattr(self, '_auto_focus_id', None)):
-            if timer:
-                self.win.after_cancel(timer)
-        if getattr(self.pet, 'action_card', None) is self:
-            self.pet.action_card = None
-        self.win.destroy()
-
-
 class ChatBox:
     """大号聊天面板:记录区宽敞、文本不截断、多行展示、超时不再压缩"""
 

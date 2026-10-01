@@ -8,7 +8,9 @@
 
 ```text
 xiaoqiao-desktop-pet/
-├─ pet.py                  窗口、Pet 状态机、互动卡片、聊天窗、声音
+├─ pet.py                  窗口、Pet 状态机、聊天窗、声音
+├─ interaction_card.py    右键互动卡片（从 pet.py 拆出的第一个界面组件）
+├─ ui_theme.py            面板与对话框的配色、字号（pet.py 与界面组件共用）
 ├─ fx.py                   特效精灵、光环、星核、字形和粒子缓存
 ├─ depth_model.py          2.5D 深度网格、姿态跟随、光照与阴影
 ├─ ai_chat.py              可选 AI、记忆、配置与回复解析
@@ -20,7 +22,7 @@ xiaoqiao-desktop-pet/
 ├─ docs/                   安装、互动图解、AI、开发与静态图集
 │  └─ media/               README/文档使用的图片、动画和 SVG
 ├─ tools/                  隔离测试、公开文件检查、文档检查、演示生成
-├─ .github/workflows/      Windows 持续检查
+├─ .github/workflows/      Windows 持续检查（快速检查 + 完整核心检查两个 job）
 ├─ README.md               产品展示与完整菜单
 ├─ CHANGELOG.md            可公开的版本变化
 ├─ CONTENTS.md             内容与彩蛋规格
@@ -45,21 +47,24 @@ flowchart TD
     Brain --> UI[气泡 / 聊天记录 / 表情反馈]
 ```
 
-角色动作、界面与渲染主要还在 `pet.py`，并未在这次文档整理中大规模拆分引擎。这样可以避免为目录美观引入行为变化；后续拆分应有单独的迁移和回归验证。
+角色动作、界面与渲染主要还在 `pet.py`，没有大规模拆分引擎，避免为目录美观引入行为变化。拆分按组件逐个进行：第一步只把 `InteractionCard` 原样搬到 `interaction_card.py`，配色与字号搬到 `ui_theme.py` 供双方共用。拆出的模块不 `import pet`（`python pet.py` 运行时 pet 是 `__main__`，反向导入会把整个 pet.py 再执行一遍）；卡片所需的显示器工作区由 `Pet.open_action_card()` 通过 `pet.work_area_at()` 算好后传入。新增根目录模块时，要同步加入 `tools/run_checks.py`、`tools/preview_ui.py`、`tools/render_showcase.py` 的复制清单。`_tick_body()`、`render()` 等后续拆分仍应有单独的迁移和回归验证。
 
 ## 按目的找源码
 
 | 想修改 | 先看 |
 | --- | --- |
-| 卡片按钮、忙碌提示、今日小结 | `pet.py` 的 `InteractionCard`、`_today_summary()` |
+| 卡片按钮、忙碌提示、今日小结 | `interaction_card.py` 的 `InteractionCard`、`pet.py` 的 `_today_summary()` |
 | 完整菜单与动态开关 | `Pet._build_menu()`、`start_tray()` |
 | 新动作和中途打断 | `start_*()`、`_begin_tl()`、`_play_timeline()`、`_tick_body()` |
 | 电量感知 | `_power_status()`、`_battery_event()`、`_battery_tick()` |
+| 勿扰 | `dnd_active()`、`_hush()`（专注或勿扰：不主动开口）、`start_dnd()`／`end_dnd()`；新增主动说话或出声的入口时，先想清楚要不要用 `_hush()` 或 `dnd_active()` 挡住。声音在 `SFX.hush` 统一拦截，只放行 `SFX.HUSH_ALLOW` 里的提醒提示音 |
+| 全屏避让 | `_notification_state()`、`_fs_step()`、`_fs_tick()`；隐藏时 `_tick_body()` 不运行，需要看得见的事件（提醒、番茄钟）先调用 `_fs_show(by_user=True)` |
 | 互动奖励 | `gain_star()`；不要绕过它直接增加星光，否则缺少飘字反馈 |
 | 光环、法阵、冥想星核 | `fx.FX`、`_draw_meditate_orbs()`、`render()` |
 | 2.5D 变形与缓存 | `DepthWarp`、`DepthMotion`；同一姿态变形需覆盖五官 |
 | 聊天 UI 与记录滚动 | `ChatBox` |
 | 支持哪些本地短句 | `Pet.PET_ACTIONS` 与 `agent.parse()` |
+| AI 发起操作前的确认 | `Pet.AI_CONFIRM_KINDS`、`_confirm_ai_intent()`、`run_agent()` |
 | 密钥和记忆写入 | `ai_chat.py` 的配置类、`_atomic_dump()` |
 
 ## 安装开发环境
@@ -74,7 +79,9 @@ python tools/check_docs.py
 python tools/check_public_files.py
 ```
 
-`run_checks.py` 把所需代码与公开素材复制到临时目录，关闭 AI、去掉模型密钥环境变量、使用虚构设置。完整模式会短暂创建测试窗口并在结束后关闭。不要直接在日常运行目录执行 `test_pet.py`。
+`run_checks.py` 把所需代码与公开素材复制到临时目录，关闭 AI、去掉模型密钥环境变量、使用虚构设置（包括关闭全屏避让，免得运行机器的全屏状态把测试窗口藏起来）。完整模式会短暂创建测试窗口并在结束后关闭。不要直接在日常运行目录执行 `test_pet.py`。
+
+GitHub Actions 的 Windows checks 有两个 job：`checks` 运行公开文件检查和 `--unit-only`；`core-checks` 运行不带参数的完整隔离检查，包括 `test_pet.py` 核心集成，超时上限 20 分钟。
 
 ### 哪些检查覆盖什么
 
@@ -88,7 +95,9 @@ python tools/check_public_files.py
 | `test_feedback.py` | 表情与互动反馈 |
 | `test_recovery.py` | 打断与姿态恢复 |
 | `test_depth.py` | 网格、姿态边界、透明度和缓存 |
-| `test_agent.py` | 25 条意图样例、提醒解析、临时应用索引，不启动真实软件 |
+| `test_dnd.py` | 勿扰判定（手动定时、夜间时段边界、当晚提前结束）、开关落盘、音效只放行提醒、朗读静音、气泡变短、喝水提醒顺延 |
+| `test_fullscreen.py` | 全屏避让的采样节流、连续判定、手动隐藏与托盘叫出、聊天窗、提醒和番茄钟唤出；打桩 Windows 通知状态 |
+| `test_agent.py` | 25 条意图样例、勿扰指令与时长、提醒解析、临时应用索引，不启动真实软件 |
 | `test_pet.py` | 完整角色集成、计数、电量、数据写入、命令与新特效等 |
 
 2026-09-17 此次本地隔离运行：**106 项单元／UI 检查 + 9 项助手检查 + 137 项核心检查通过**。助手检查中的意图覆盖另含 25 条句子；不要把它们重复加进总数。检查数量会随代码演进变化，以实际输出为准。
@@ -121,6 +130,6 @@ python tools/preview_ui.py --view chat
 2. 按改动运行隔离检查；UI 或视觉改动生成并检查实际图像。
 3. `git diff --check` 检查格式；`check_docs.py` 检查本地链接、显式锚点与媒体引用。
 4. 先审阅待提交文件，再暂存明确需要公开的文件；运行 `check_public_files.py` 检查 Git 跟踪内容。
-5. 提交到公开仓库，确认 Windows checks 通过。打包另按安装指南操作。
+5. 提交到公开仓库，确认 Windows checks 的两个 job 都通过。打包另按安装指南操作。
 
 不要从日常开发目录整包复制 `.git`、聊天、记忆、配置、调试日志、桌面截图或下载缓存。运行数据与公开代码分别保管；演示素材来自隔离样本。
