@@ -13,12 +13,12 @@
 
 ## 文件
 
-- `flat_workspace.py)：当前工作台完整参考实现，包含 Agent 选择和工作流过滤。
-- `test_flat_workspace.py)：行数、交互、来源映射与真实灯态测试。
-- `six-row-workflow.patch)：较早的六行间距差异，只覆盖压缩列表，不包含这里新增的 Agent 切换实现。需要 Agent 切换时以当前完整 `flat_workspace.py` 和测试为准。
+- flat_workspace.py：当前工作台完整参考实现，包含 Agent 选择和工作流过滤。
+- test_flat_workspace.py：行数、交互、来源映射与真实灯态测试。
+- six-row-workflow.patch：较早的六行间距差异，只覆盖压缩列表，不包含这里新增的 Agent 切换实现。需要 Agent 切换时以当前完整 flat_workspace.py 和测试为准。
 
 ## 仓库背景
 
-目标仓库是 https://github.com/shuai9928/xiaoqiao-desktop-pet 。公开 `main` 目前不含这套半高工作台基线；本机工作区与公开 `main` 没有共同 Git 历史。这个分支是交接参考，不是可直接运行的完整仓库，也不应合并到 `main` 来代替本机项目基线。
+目标仓库是 https://github.com/shuai9928/xiaoqiao-desktop-pet。公开 main 目前不含这套半高工作台基线；本机工作区与公开 main 没有共同 Git 历史。这个分支是交接参考，不是可直接运行的完整仓库，也不应合并到 main 来代替本机项目基线。
 
-在 Claude 云端中打开本分支的文件即可检查和继续修改。应用到其它代码时，先确认其 `pet.py`、`moon_board.py` 等接口与本机基线一致，再运行对应测试。
+在 Claude 云端中打开本分支的文件即可检查和继续修改。应用到其它代码时，先确认其 pet.py、moon_board.py 等接口与本机基线一致，再运行对应测试。
