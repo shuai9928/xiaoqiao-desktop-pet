@@ -11,6 +11,43 @@ COLORS={'running':ACCENT,'waiting':'#efba70','error':'#ef8585','done':'#83caa2',
 W,H=440,260
 LIST=(170,42,254,108)
 ROW=18
+AGENT_ORDER=('Codex','Claude','ZCode')
+
+
+def agent_name(raw):
+    """Map session source keys (including Mac/WSL variants) to a visible agent."""
+    value=str(raw or 'AI').lower()
+    if value.startswith('mac-claude') or 'claude' in value:return 'Claude'
+    if value.startswith('mac-codex') or 'codex' in value:return 'Codex'
+    if 'zcode' in value:return 'ZCode'
+    if value.startswith('mac'):return 'Mac'
+    return 'AI'
+
+
+def selected_agent(ui):
+    """The strip selection drives the workflow list; default to the app selection."""
+    raw=ui.get('flat_agent') or (ui.get('sel_session') or {}).get('agent') or ui.get('sel_key')
+    return agent_name(raw) if raw else 'ZCode'
+
+
+def sessions_for(ui,name=None):
+    name=name or selected_agent(ui)
+    return [s for s in ui.get('sessions') or [] if agent_name(s.get('agent'))==name]
+
+
+def session_for(ui,name=None,prefer_current=True):
+    """Pick a provider's freshest live session, falling back to its latest record."""
+    rows=sessions_for(ui,name)
+    current=ui.get('sel_session') or {}
+    if prefer_current and current and agent_name(current.get('agent'))== (name or selected_agent(ui)):
+        return current
+    def rank(s):
+        state=s.get('state','idle')
+        f=workflow(dict(ui,sel_session=s))
+        priority={'running':0,'waiting':1,'error':2,'done':3,'idle':4}
+        return (0 if not f['stale'] and state in ('running','waiting','error') else 1,
+                priority.get(state,4),-(_number(s.get('updated')) or 0))
+    return min(rows,key=rank) if rows else None
 
 
 def geometry(owner, geo):
@@ -29,10 +66,12 @@ def geometry(owner, geo):
 
 def rows_for(ui,mode):
     if mode=='steps':
-        f=workflow(ui)
+        session=session_for(ui)
+        if session is None:return []
+        f=workflow(dict(ui,sel_session=session))
         return [dict(s,id=f['session'].get('id'),state=s['status']) for s in reversed(f['steps'])]
     rows=[]
-    for s in ui.get('sessions') or []:
+    for s in sessions_for(ui):
         f=workflow(dict(ui,sel_session=s));steps=f['steps']
         if not steps:continue
         state='idle' if f['stale'] else s.get('state','idle')
@@ -45,17 +84,16 @@ def rows_for(ui,mode):
 
 
 def agent_lights(ui):
-    groups={}
+    groups={name:'idle' for name in AGENT_ORDER}
     # This strip answers whether ANY agent is still running, independently
     # of errors or completion in another session from the same provider.
     priority={'running':0,'error':1,'waiting':2,'idle':3}
     for s in ui.get('sessions') or []:
-        raw=str(s.get('agent') or 'AI').lower()
-        name='Mac' if raw.startswith('mac') else ('Codex' if 'codex' in raw else 'Claude' if 'claude' in raw else 'ZCode' if 'zcode' in raw else 'AI')
+        name=agent_name(s.get('agent'))
         f=workflow(dict(ui,sel_session=s));state=s.get('state','idle')
         state=state if not f['stale'] and state in ('running','waiting','error') else 'idle'
         if name not in groups or priority[state]<priority[groups[name]]:groups[name]=state
-    return [(name,groups[name]) for name in ('Codex','Claude','ZCode','Mac','AI') if name in groups]
+    return [(name,groups[name]) for name in (*AGENT_ORDER,'Mac','AI') if name in groups]
 
 
 def widget_rows(raw,now):
@@ -137,6 +175,13 @@ def bar_input(owner,e,phase):
 def action(owner,kind,payload):
     if kind=='flat_mode':owner._flat_mode=payload;owner._flat_scroll=0
     elif kind=='flat_task':owner._book_sel=('sid',payload);owner._flat_mode='steps';owner._flat_scroll=0
+    elif kind=='flat_agent':
+        name=str(payload or '')
+        if name not in AGENT_ORDER:return False
+        owner._flat_agent=name;owner._flat_mode='tasks';owner._flat_scroll=0
+        ui=((getattr(owner,'_swing',None) or {}).get('ui') or {})
+        session=session_for(ui,name,prefer_current=False)
+        if session:owner._book_sel=('agent',session.get('agent'))
     elif kind=='flat_page':scroll(owner,-payload*120*(LIST[3]//ROW))
     elif kind=='flat_top':owner._flat_scroll=0
     else:return False
@@ -151,7 +196,8 @@ def render(ui,u=1,mode='tasks',offset=0):
         f=font(round(size*u),weight);d.text((round(x*u),round(y*u)),_fit(s,f,width*u) if width else str(s),font=f,fill=color,anchor=anchor)
     def hit(rect,kind,payload=None):hits.append(tuple(round(v*u) for v in rect)+(kind,payload))
     box((0,0,W-1,H-1),BG,16,LINE)
-    txt(173,13,'当前步骤' if mode=='steps' else '工作流 · 当前步骤',13,weight=550)
+    agent=selected_agent(ui)
+    txt(173,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=235)
     txt(420,14,'返回' if mode=='steps' else '聊聊',11,ACCENT,anchor='ra')
     hit((386,7,40,30),'flat_mode' if mode=='steps' else 'house_chat','tasks' if mode=='steps' else None)
     rows=rows_for(ui,mode);n=len(rows);offset=max(0,min(float(offset),max(0,n*ROW-LIST[3])))
@@ -179,11 +225,13 @@ def render(ui,u=1,mode='tasks',offset=0):
     box((16,158,408,1),LINE)
     txt(17,163,'Agent',10,DIM)
     lamps=agent_lights(ui)
-    if not lamps:txt(67,163,'暂无运行记录',11,DIM)
     for i,(name,st) in enumerate(lamps):
-        x=66+i*70;col={'running':'#83caa2','waiting':'#efba70','error':'#ef8585','idle':'#656772'}[st]
-        box((x,171,6,6),col,3);txt(x+11,163,name,11,INK if st!='idle' else DIM)
-    hit((16,160,359,25),'house_trace')
+        x=66+i*67;col={'running':'#83caa2','waiting':'#efba70','error':'#ef8585','idle':'#656772'}[st]
+        if name==agent:
+            box((x-3,159,62,23),'#35343d',5,ACCENT)
+        box((x,167,7,7),col,4);txt(x+12,163,name,11,ACCENT if name==agent else INK if st!='idle' else DIM)
+        if name in AGENT_ORDER:hit((x-3,159,62,23),'flat_agent',name)
+    hit((16,160,42,25),'house_trace')
     txt(420,164,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
     box((16,187,408,1),LINE)
     for i,row in enumerate(quota_rows(ui)[:3]):
@@ -203,7 +251,8 @@ def render(ui,u=1,mode='tasks',offset=0):
 def push(owner,small):
     from pet import push_layered,SWING_PERSP
     sw=owner._swing;g=sw['geo'];u=g['u'];ui=live_ui(owner,sw.get('ui') or {});mode=getattr(owner,'_flat_mode','tasks')
-    key=(repr(tuple(ui.get(n) for n in ('sessions','sel_session','quota','codex_quota','codex_quota_error','mock','quota_widget'))),int((ui.get('now') or time.time())/15),u,mode,getattr(owner,'_flat_scroll',0))
+    ui=dict(ui,flat_agent=getattr(owner,'_flat_agent',None) or selected_agent(ui))
+    key=(repr(tuple(ui.get(n) for n in ('sessions','sel_session','quota','codex_quota','codex_quota_error','mock','quota_widget','flat_agent'))),int((ui.get('now') or time.time())/15),u,mode,getattr(owner,'_flat_scroll',0))
     cache=getattr(owner,'_flat_cache',None)
     if cache is None or cache[0]!=key:
         base,hits,off=render(ui,u,mode,getattr(owner,'_flat_scroll',0));owner._flat_scroll=off;owner._flat_cache=(key,base,hits)
@@ -222,3 +271,4 @@ def push(owner,small):
     owner._ac(canvas,cached[0],cached[1][0]-O[0],cached[1][1]-O[1])
     sw['scene_canvas']=canvas;sw['ui_hits']=hits
     push_layered(owner.hwnd,canvas,sw['scene_l'],sw['scene_t'],255)
+
