@@ -8,17 +8,17 @@ from moon_board import workflow,_fit
 
 BG='#1d1e2e';SURFACE='#2b2c32';LINE='#363850';INK='#f4f5fc';DIM='#b4b7cc';ACCENT='#baa3ed';RIM='#666b96'
 COLORS={'running':ACCENT,'waiting':'#efba70','error':'#f39292','done':'#83caa2','idle':DIM,'recorded':DIM}
-RX=0;PY=14;PH=260   # RX: extra width of the pet column; PY: headroom above the panel (her hat rises into it); PH: expanded panel height
+RX=10;PY=14;PH=260   # RX: extra width of the pet column; PY: headroom above the panel (her hat rises into it); PH: expanded panel height
 W,H=440,PH+PY
 PANEL_REST=232;PANEL_ACTIVE=248   # per-pixel alpha of the panel fill (not blur); rim, glyphs and text stay opaque
 SHAPES={'running':'star','waiting':'ring','error':'tri','done':'dot','idle':'dot','recorded':'dot'}
 LIST=(170+RX,42+PY,254-RX,108);RW=LIST[2]-14   # window coordinates; RW = row width
-PET_M=1.28;PET_BOX=(142*PET_M,140*PET_M);PET_CX=76;PET_TOP=9   # scale of the studio box that sizes her (was 142x140 at cx 82, top 15); drives geometry()
+PET_M=1.4;PET_BOX=(142*PET_M,140*PET_M);PET_CX=80;PET_TOP=10   # scale of the studio box that sizes her (was 142x140 at cx 82, top 15); drives geometry()
 ART_OLD=(38.7,9.0,139.8,140.0)   # swing.png content (left, hat tip, right, soles) in the OLD layout's units; fitted to the maintainer's screenshot
 SHOW_STAND=False   # the grey A-frame is no longer drawn: the swing hangs free and the studio bounds only set the scale
 ROW=18
 AGENT_ORDER=('Codex','Claude','ZCode')
-LIVE_H=170;LIVE_ROWS=2;LIVE=('running','waiting','error');DEFAULT_MODE='live'
+LIVE_H=178;LIVE_ROWS=2;LIVE=('running','waiting','error');DEFAULT_MODE='live'
 NAMES={'Claude':'#cfac94','Codex':'#b9c6e5'}
 
 
@@ -251,6 +251,19 @@ def panel_alpha(owner,ui,mode):
     return PANEL_ACTIVE if mode!='live' or attention or getattr(owner,'_flat_hover',False) else PANEL_REST
 
 
+def quota_block(box,txt,ui,x0,y0,pitch,limit,nw=40):
+    """Right-column quota rows: name (nw wide), then up to two cycles (label, bar, percent); the tag at the right edge says live or mock."""
+    for i,row in enumerate(quota_rows(ui)[:limit]):
+        y=y0+i*pitch;txt(x0,y,row['name'],11,NAMES.get(row['name'],'#b9c6e5'),width=nw+2)
+        if not row['cycles']:txt(x0+nw,y,'暂无数据',11,DIM)
+        for j,c in enumerate(row['cycles'][:2]):
+            x=x0+nw+j*76;v=c['used'];stale=c['stale'];col=DIM if stale else COLORS['error'] if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
+            txt(x,y,c['label'],10,DIM);box((x+13,y+10,24,4),LINE,2)
+            if v is not None and v>0:box((x+13,y+10,max(2,24*v/100),4),col,2)
+            txt(x+72,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
+    txt(420,y0+1,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
+
+
 def live_title(rows):
     n={k:sum(r['state']==k for r in rows) for k in LIVE}
     if n['waiting']:return f"{n['waiting']} 个在等你确认"
@@ -289,15 +302,7 @@ def render_live(ui,u=1):
         d.polygon([(round(410*u),round((y+6+PY)*u)),(round(418*u),round((y+6+PY)*u)),(round(414*u),round((y+11+PY)*u))],fill=DIM)
         hit((172+RX,y-3,252-RX,18),*(('flat_agent',go) if go in AGENT_ORDER else ('flat_mode','tasks')))
     box((173+RX,121,251-RX,1),LINE)
-    for i,row in enumerate(quota_rows(ui)[:2]):
-        y=128+i*17;txt(173+RX,y,row['name'],11,NAMES.get(row['name'],'#b9c6e5'),width=42)
-        if not row['cycles']:txt(213+RX,y,'暂无数据',11,DIM)
-        for j,c in enumerate(row['cycles'][:2]):
-            x=213+RX+j*76;v=c['used'];stale=c['stale'];col=DIM if stale else COLORS['error'] if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
-            txt(x,y,c['label'],10,DIM);box((x+13,y+10,24,4),LINE,2)
-            if v is not None and v>0:box((x+13,y+10,max(2,24*v/100),4),col,2)
-            txt(x+72,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
-    txt(420,129,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
+    quota_block(box,txt,ui,173+RX,128,17,2)
     hit((172+RX,120,252-RX,46),'swallow')
     return im,[q for q in hits if q[2]>0 and q[3]>0],0
 
@@ -333,29 +338,18 @@ def render(ui,u=1,mode='tasks',offset=0):
         hit((414,LIST[1]-PY,10,max(0,ty-LIST[1]+PY)),'flat_page',-1)
         hit((414,ty+thumb,10,max(0,LIST[1]-PY+LIST[3]-ty-thumb)),'flat_page',1)
     hit((LIST[0],LIST[1]-PY,LIST[2],LIST[3]),'swallow')
-    box((16,158,408,1),LINE)
-    txt(17,163,'Agent',10,DIM)
-    lamps=agent_lights(ui)
+    sx=173+RX;lamps=agent_lights(ui);pitch=min(67,(251-RX-42)//max(1,len(lamps)))
+    box((sx,158,251-RX,1),LINE)
+    txt(sx,163,'Agent',10,DIM)
     for i,(name,st) in enumerate(lamps):
-        x=66+i*67;col=COLORS[st] if st!='idle' else '#656772'
-        if name==agent:
-            box((x-3,159,62,23),'#35343d',5,ACCENT)
-        glyph(im,x+3.5,170.5+PY,3.4,col,SHAPES.get(st,'dot'),u);txt(x+12,163,name,11,ACCENT if name==agent else INK if st!='idle' else DIM)
-        if name in AGENT_ORDER:hit((x-3,159,62,23),'flat_agent',name)
-    hit((16,160,42,25),'house_trace')
-    txt(420,164,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
-    box((16,187,408,1),LINE)
-    for i,row in enumerate(quota_rows(ui)[:3]):
-        y=190+i*21
-        txt(18,y,row['name'],11,'#cfac94' if row['name']=='Claude' else '#b9c6e5',width=80)
-        if not row['cycles']:txt(113,y,'暂无数据',11,DIM)
-        for j,c in enumerate(row['cycles']):
-            x=105+j*156;v=c['used'];stale=c['stale'];col=DIM if stale else COLORS['error'] if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
-            txt(x,y,c['label'],10,DIM)
-            box((x+23,y+10,70,4),LINE,2)
-            if v is not None and v>0:box((x+23,y+10,max(2,70*v/100),4),col,2)
-            txt(x+145,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
-    hit((16,188,408,67),'swallow')
+        x=sx+36+i*pitch;col=COLORS[st] if st!='idle' else '#656772'
+        if name==agent:box((x-3,159,pitch-5,23),'#35343d',5,ACCENT)
+        glyph(im,x+3.5,170.5+PY,3.4,col,SHAPES.get(st,'dot'),u);txt(x+12,163,name,11,ACCENT if name==agent else INK if st!='idle' else DIM,width=pitch-16)
+        if name in AGENT_ORDER:hit((x-3,159,pitch-5,23),'flat_agent',name)
+    hit((sx-1,160,40,25),'house_trace')
+    box((sx,187,251-RX,1),LINE)
+    quota_block(box,txt,ui,sx,190,21,3,52)
+    hit((sx,188,251-RX,67),'swallow')
     return im,[q for q in hits if q[2]>0 and q[3]>0],offset
 
 

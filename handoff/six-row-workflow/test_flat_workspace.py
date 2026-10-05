@@ -123,7 +123,7 @@ class FlatTests(unittest.TestCase):
   l,t,r,b=f.pet_content()                                              # what she actually shows, not the invisible studio box
   self.assertGreaterEqual(t,0)                                         # the hat tip is never cut off by the window top
   if f.PY:self.assertLess(t,f.PY)                                      # with headroom, the hat rises above the panel
-  self.assertLessEqual(b,f.PY+158)                                     # soles stay above the agent strip when expanded
+  self.assertLessEqual(b,f.PY+f.LIVE_H-4)                              # soles stay inside the compact panel (the expanded view has the whole column)
   self.assertGreaterEqual(l,0);self.assertLessEqual(r,f.LIST[0]-12)    # inside the pet column, clear of the step column
  def test_hits_stay_inside_the_window(self):
   for mode in ('live','tasks','steps'):
@@ -162,6 +162,19 @@ class FlatTests(unittest.TestCase):
    self.assertEqual(studio.return_value.render.called,show,show)           # the grey frame is rendered only when asked for
    self.assertEqual(o._ac.call_count,2 if show else 1,show)                # otherwise only the swing art itself is composited
    self.assertEqual(pushed.call_args[0][1].size,(round(f.W*1.5),round(f.H*1.5)))
+ def test_expanded_strip_and_quota_stay_in_the_right_column(self):
+  for scale in (1,1.5):
+   im,hits,_=f.render(self.mixed(),scale,'tasks')
+   below=round((f.LIST[1]+f.LIST[3]+1)*scale);band=im.crop((round(12*scale),below,round((f.LIST[0]-6)*scale),round((f.PY+f.PH-8)*scale)))
+   self.assertEqual(len(set(band.getdata())),1,scale)                                  # nothing is drawn under her: no divider, lamp, text or bar
+   self.assertTrue(all(h[0]>=round((f.LIST[0]-4)*scale) for h in hits if h[1]>=below),scale)   # and no hit rect either, so clicks reach her
+ def test_agent_chips_and_quota_fit_the_right_column(self):
+  for n in (3,5):
+   ui=self.mixed();ui['sessions']=ui['sessions']+[dict(ui['sessions'][0],id=f'x{i}',agent=a) for i,a in enumerate(('mac','zz-unknown')[:n-3])]
+   im,hits,_=f.render(ui,1,'tasks')
+   for x,y,w,h,kind,_ in hits:
+    if kind=='flat_agent':self.assertTrue(f.LIST[0]-4<=x and x+w<=424,(n,x,w))
+   q=im.crop((425,f.PY+160,438,f.PY+f.PH-24));self.assertEqual(len(set(q.getdata())),1,n)   # nothing spills into the right margin (stop above the rounded corner)
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
