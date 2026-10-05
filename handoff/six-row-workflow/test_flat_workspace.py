@@ -120,10 +120,11 @@ class FlatTests(unittest.TestCase):
  def test_layout_constants_are_consistent(self):
   self.assertEqual(f.H,f.PH+f.PY);self.assertEqual(f.LIST[0]+f.LIST[2],424)
   self.assertGreaterEqual(f.LIST[1],f.PY);self.assertLessEqual(f.LIST[1]+f.LIST[3],f.PY+158)
-  self.assertGreaterEqual(f.PET_TOP,0)                                # she stays inside the window
-  if f.PY:self.assertLess(f.PET_TOP,f.PY)                             # with headroom, her hat rises above the panel
-  self.assertLessEqual(f.PET_TOP+f.PET_BOX[1],f.PY+158)               # and stands above the agent strip when expanded
-  self.assertLess(f.PET_CX+f.PET_BOX[0]/2,f.LIST[0])                  # never reaches the step column
+  l,t,r,b=f.pet_content()                                              # what she actually shows, not the invisible studio box
+  self.assertGreaterEqual(t,0)                                         # the hat tip is never cut off by the window top
+  if f.PY:self.assertLess(t,f.PY)                                      # with headroom, the hat rises above the panel
+  self.assertLessEqual(b,f.PY+158)                                     # soles stay above the agent strip when expanded
+  self.assertGreaterEqual(l,0);self.assertLessEqual(r,f.LIST[0]-12)    # inside the pet column, clear of the step column
  def test_hits_stay_inside_the_window(self):
   for mode in ('live','tasks','steps'):
    for scale in (1,1.5):
@@ -148,6 +149,19 @@ class FlatTests(unittest.TestCase):
   self.assertEqual([(r.kind,r.agent) for r in out],[('waiting','ZCode')])
   self.assertIsNone(rr.pull(1000.0+ar.WAIT_DWELL+2,'approach',rows))             # she has just spoken: the global gap holds
   self.assertEqual(rr.pull(1000.0+ar.WAIT_DWELL+ar.GLOBAL_GAP+2,'approach',rows).kind,'error')   # then the errored one gets its touch
+ def test_push_draws_the_stand_only_when_asked_for(self):
+  import sys
+  from unittest.mock import patch,Mock
+  for show in (False,True):
+   swing=Image.new('RGBA',(40,40),(200,100,255,255));sa=Mock();sa.scaled.return_value={'swing':(swing,(0,0))};sa.keystone.return_value=(swing,(5,6))
+   studio=Mock();studio.return_value.render.return_value=(swing,(0,0))     # a stand render returns (image, offset) like the host's
+   pushed=Mock();cache={};ks=SimpleNamespace(get=lambda k:cache.get(k),put=lambda k,v:cache.__setitem__(k,v))
+   o=SimpleNamespace(_swing={'geo':{'u':1.5,'k':.2,'O':(0,0),'flat':True},'ui':self.mixed(),'scene_l':0,'scene_t':0,'theta':0},_scene_art=sa,_studio=studio,
+                     _ac=Mock(),_art_pose=lambda ph:None,_last_face_key='x',_ks_cache=ks,_art_face_overlay=lambda face,k:None,hwnd=1)
+   with patch.object(f,'SHOW_STAND',show),patch.dict(sys.modules,{'pet':SimpleNamespace(push_layered=pushed,SWING_PERSP=.1)}):f.push(o,False)
+   self.assertEqual(studio.return_value.render.called,show,show)           # the grey frame is rendered only when asked for
+   self.assertEqual(o._ac.call_count,2 if show else 1,show)                # otherwise only the swing art itself is composited
+   self.assertEqual(pushed.call_args[0][1].size,(round(f.W*1.5),round(f.H*1.5)))
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):

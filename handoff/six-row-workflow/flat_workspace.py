@@ -8,12 +8,14 @@ from moon_board import workflow,_fit
 
 BG='#1d1e2e';SURFACE='#2b2c32';LINE='#363850';INK='#f4f5fc';DIM='#b4b7cc';ACCENT='#baa3ed';RIM='#666b96'
 COLORS={'running':ACCENT,'waiting':'#efba70','error':'#f39292','done':'#83caa2','idle':DIM,'recorded':DIM}
-RX=27;PY=14;PH=260   # RX: extra width of the pet column; PY: headroom above the panel (her hat rises into it); PH: expanded panel height
+RX=0;PY=14;PH=260   # RX: extra width of the pet column; PY: headroom above the panel (her hat rises into it); PH: expanded panel height
 W,H=440,PH+PY
 PANEL_REST=232;PANEL_ACTIVE=248   # per-pixel alpha of the panel fill (not blur); rim, glyphs and text stay opaque
 SHAPES={'running':'star','waiting':'ring','error':'tri','done':'dot','idle':'dot','recorded':'dot'}
 LIST=(170+RX,42+PY,254-RX,108);RW=LIST[2]-14   # window coordinates; RW = row width
-PET_BOX=(170,168);PET_CX=95;PET_TOP=1   # her box (was 142x140 at cx 82, top 15)
+PET_M=1.28;PET_BOX=(142*PET_M,140*PET_M);PET_CX=76;PET_TOP=9   # scale of the studio box that sizes her (was 142x140 at cx 82, top 15); drives geometry()
+ART_OLD=(38.7,9.0,139.8,140.0)   # swing.png content (left, hat tip, right, soles) in the OLD layout's units; fitted to the maintainer's screenshot
+SHOW_STAND=False   # the grey A-frame is no longer drawn: the swing hangs free and the studio bounds only set the scale
 ROW=18
 AGENT_ORDER=('Codex','Claude','ZCode')
 LIVE_H=170;LIVE_ROWS=2;LIVE=('running','waiting','error');DEFAULT_MODE='live'
@@ -63,6 +65,11 @@ def _swing_sessions(owner):
     sw=getattr(owner,'_swing',None);ui=sw.get('ui') if isinstance(sw,dict) else None
     rows=ui.get('sessions') if isinstance(ui,dict) else None
     return rows if isinstance(rows,list) else []
+
+
+def pet_content():
+    """Visible swing + girl box (left, top, right, bottom) in window units under the current PET_* constants."""
+    l,t,r,b=ART_OLD;return (PET_CX+(l-82)*PET_M,PET_TOP+(t-15)*PET_M,PET_CX+(r-82)*PET_M,PET_TOP+(b-15)*PET_M)
 
 
 def geometry(owner, geo):
@@ -363,7 +370,7 @@ def push(owner,small):
         base,hits,off=render(ui,u,mode,getattr(owner,'_flat_scroll',0));owner._flat_scroll=off;owner._flat_cache=(key,base,hits)
     else:_,base,hits=cache
     canvas=base.copy();sa=owner._scene_art;k=g['k'];O=g['O'];layers=sa.scaled(k)
-    stand,at=owner._studio().render(k);owner._ac(canvas,stand,at[0]-O[0],at[1]-O[1])
+    if SHOW_STAND:stand,at=owner._studio().render(k);owner._ac(canvas,stand,at[0]-O[0],at[1]-O[1])
     phase=round(sw.get('theta',0)/.008)*.008;pose=owner._art_pose(phase);face=owner._last_face_key
     ck=('flat',round(k,4),phase,face,pose['q'] if pose else None)
     cached=owner._ks_cache.get(ck)
