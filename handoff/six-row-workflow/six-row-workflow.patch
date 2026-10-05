@@ -1,0 +1,41 @@
+diff --git a/flat_workspace.py b/flat_workspace.py
+index 10cdcc5..de88d86 100644
+--- a/flat_workspace.py
++++ b/flat_workspace.py
+@@ -13 +13 @@ LIST=(170,42,254,108)
+-ROW=36
++ROW=18
+@@ -164 +164 @@ def render(ui,u=1,mode='tasks',offset=0):
+-        td.ellipse((2*u,14*u,8*u,20*u),fill=col)
++        td.ellipse((2*u,6*u,8*u,12*u),fill=col)
+@@ -166,2 +166 @@ def render(ui,u=1,mode='tasks',offset=0):
+-        td.text((17*u,7*u),_fit(row['title'],f,218*u),font=f,fill=INK)
+-        td.line((17*u,(ROW-1)*u,238*u,(ROW-1)*u),fill=LINE,width=1)
++        td.text((17*u,ROW*u/2),_fit(row['title'],f,218*u),font=f,fill=INK,anchor='lm')
+diff --git a/test_flat_workspace.py b/test_flat_workspace.py
+index d347182..722b1ed 100644
+--- a/test_flat_workspace.py
++++ b/test_flat_workspace.py
+@@ -14 +14 @@ class FlatTests(unittest.TestCase):
+- def test_three_complete_rows_at_both_densities(self):
++ def test_six_complete_rows_at_both_densities(self):
+@@ -17,2 +17,2 @@ class FlatTests(unittest.TestCase):
+-   rows=[h for h in hits if h[4]=='flat_task'];self.assertEqual(len(rows),3)
+-   self.assertTrue(all(h[3]==round(36*scale) for h in rows));self.assertEqual(im.size,(round(440*scale),round(260*scale)))
++   rows=[h for h in hits if h[4]=='flat_task'];self.assertEqual(len(rows),6)
++   self.assertTrue(all(h[3]==round(18*scale) for h in rows));self.assertEqual(im.size,(round(440*scale),round(260*scale)))
+@@ -21 +21 @@ class FlatTests(unittest.TestCase):
+-  for off in range(0,23*36,48):
++  for off in range(0,23*18,48):
+@@ -27 +27 @@ class FlatTests(unittest.TestCase):
+-  for off in range(0,40*36,96):
++  for off in range(0,40*18,96):
+@@ -32 +32 @@ class FlatTests(unittest.TestCase):
+-  pet.Pet.on_wheel_scene(p,SimpleNamespace(x=300,y=100,delta=-120*100));self.assertEqual(p._flat_scroll,216);p._art_regeo.assert_not_called()
++  pet.Pet.on_wheel_scene(p,SimpleNamespace(x=300,y=100,delta=-120*100));self.assertEqual(p._flat_scroll,54);p._art_regeo.assert_not_called()
+@@ -47 +47 @@ class FlatTests(unittest.TestCase):
+-  self.assertEqual(p._flat_scroll,216)
++  self.assertEqual(p._flat_scroll,54)
+@@ -54 +54 @@ class FlatTests(unittest.TestCase):
+-  self.assertEqual(sum(h[4]=='flat_task' for h in p._swing['ui_hits']),3)
++  self.assertEqual(sum(h[4]=='flat_task' for h in p._swing['ui_hits']),6)
