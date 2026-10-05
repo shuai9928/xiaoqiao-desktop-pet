@@ -285,7 +285,7 @@ def step_flow(row):
 
 
 def render_live(ui,u=1):
-    """Compact view: one row per agent (state glyph, name, step dots / current step -> next), quota below, her speech bubble over the top.
+    """Compact view: one row per agent (state glyph, name, step dots / current step -> next), quota below.
     The panel is drawn at y=PY..PY+LIVE_H of the same window; the headroom above (her hat) and the rest below stay transparent."""
     im,d,hits,box,txt,hit=_pen(u)
     gl=lambda cx,cy,*a,**k:glyph(im,cx,cy+PY,*a,**k)
@@ -314,12 +314,6 @@ def render_live(ui,u=1):
     box((173+RX,122,251-RX,1),LINE)
     quota_block(box,txt,ui,173+RX,128,17,2)
     hit((172+RX,121,252-RX,47),'swallow')
-    msg=str(ui.get('bubble') or '').strip()
-    if msg:                                           # her bubble sits over the top row while she has something to say
-        fb=font(round(12*u),550);bx,by,cw=178+RX,2,212;w=fb.getlength(_fit(msg,fb,cw*u))/u+24;w=424-bx if bx+w>392 else w   # long: cover the chat button completely
-        box((bx,by,w,24),'#ece9f7',12,'#c9c3e8')
-        d.polygon([(round(bx*u),round((by+7+PY)*u)),(round((bx-9)*u),round((by+13+PY)*u)),(round(bx*u),round((by+18+PY)*u))],fill='#ece9f7')
-        txt(bx+12,by+5,msg,12,'#2a2740',width=cw,weight=550);hits.insert(0,(round(bx*u),round((by+PY)*u),round(w*u),round(24*u),'house_chat',None))   # tapping her bubble opens the chat
     return im,[q for q in hits if q[2]>0 and q[3]>0],0
 
 
@@ -374,8 +368,7 @@ def push(owner,small):
     sw=owner._swing;g=sw['geo'];u=g['u'];ui=live_ui(owner,sw.get('ui') or {});mode=_mode(owner)
     ui=dict(ui,flat_agent=getattr(owner,'_flat_agent',None) or selected_agent(ui))
     ui=dict(ui,panel_alpha=panel_alpha(owner,ui,mode))
-    ui=dict(ui,bubble=getattr(owner,'_flat_bubble',None))
-    key=(repr(tuple(ui.get(n) for n in ('sessions','sel_session','quota','codex_quota','codex_quota_error','mock','quota_widget','flat_agent','panel_alpha','bubble'))),int((ui.get('now') or time.time())/15),u,mode,getattr(owner,'_flat_scroll',0))
+    key=(repr(tuple(ui.get(n) for n in ('sessions','sel_session','quota','codex_quota','codex_quota_error','mock','quota_widget','flat_agent','panel_alpha'))),int((ui.get('now') or time.time())/15),u,mode,getattr(owner,'_flat_scroll',0))
     cache=getattr(owner,'_flat_cache',None)
     if cache is None or cache[0]!=key:
         base,hits,off=render(ui,u,mode,getattr(owner,'_flat_scroll',0));owner._flat_scroll=off;owner._flat_cache=(key,base,hits)

@@ -15,16 +15,16 @@
 
 目的：让 Claude、Codex、ZCode 三个工作流同时一眼可见，同时把版面还给她。上面「当前交互」描述的是展开后的完整视图，仍然完整保留。
 
-- **没有标题**：原来的「我看着呢 · N 个在跑／都忙完啦」那一行已砍掉（`live_title` 已删除），顶部改由**她的气泡**接管。宿主在气泡出现／消失时设置 `owner._flat_bubble`（文字或 `None`，`push()` 会带进渲染和缓存键）。气泡盖在第一行上；没话说时那里就是第一个 Agent。气泡长到碰到「聊聊」时会把按钮完整盖住，点气泡就是点聊天（`house_chat`）。
+- **没有标题**：原来的「我看着呢 · N 个在跑／都忙完啦」那一行已砍掉（`live_title` 已删除），顶部直接就是第一个 Agent 行。工作台里也没有对话气泡（曾做过一版，已按要求去掉），她说话仍用宿主自己的气泡。
 - **每个 Agent 一行**（`agent_rows`）：固定顺序 Codex、Claude、ZCode（其后 Mac、AI），最多 `LIVE_ROWS=3` 行。每个 Agent 显示它最新的会话——在跑的优先，其次按状态和时间；忙完的也显示（淡色）；没有会话的 Agent 不画，也不编造；没有步骤的会话跳过，换该 Agent 的下一个会话。「另有 N 个已结束 · 展开」已砍掉。
 - **一行两行字**（行距 `LPITCH=36`，起点 `LROW0=10`）：第一行是状态灯、Agent 名、**工作链圆点（在名字右边）**、「第 N 步」；第二行是当前步骤标题，后面 **→ 指向下一步**。Agent 在真正开始下一步之前我们并不知道它是什么，所以箭头后先画灰色的「…」，做完一步这一行就跳到新的一步。如果你本机的数据里有计划中的步骤，放进 `session['next']` 就会显示在箭头后面。已结束的行不画箭头。
-- **点击**：Agent 名 → `flat_agent`（打开该 Agent 的列表，列表右上角有「收起」回到这里）；这一行其余部分 → `flat_task`（看该会话的步骤，`action` 会按该会话的来源同步 `_flat_agent`，否则点到非当前 Agent 的会话会因按 Agent 过滤而显示别人的步骤；`_swing` 结构异常时不会抛错，只是不同步）；右上「聊聊」和气泡 → `house_chat`。原来的「展开」入口没有了，展开列表现在从 Agent 名进入。
+- **点击**：Agent 名 → `flat_agent`（打开该 Agent 的列表，列表右上角有「收起」回到这里）；这一行其余部分 → `flat_task`（看该会话的步骤，`action` 会按该会话的来源同步 `_flat_agent`，否则点到非当前 Agent 的会话会因按 Agent 过滤而显示别人的步骤；`_swing` 结构异常时不会抛错，只是不同步）；右上「聊聊」→ `house_chat`。原来的「展开」入口没有了，展开列表现在从 Agent 名进入。
 - **工作链用圆点串表示**：每步一个点（颜色取自步骤 status），当前步放大带光圈；多于 6 步时前面折成两个小灰点；不假设总步数。
 - **额度并入右栏**压成两行（与展开视图共用 `quota_block`），不再通栏，避免盖住她的区域。
 - **live 只画面板的上 178 高**（`LIVE_H`），位于窗口 y=`PY`..`PY`+178，面板下方保持透明。透明区是否让点击穿透、窗口是否因此悬在任务栏之上，需要在本机确认。
 - **不新增点击类型**，只复用 `flat_task`、`flat_agent`、`flat_mode`、`house_chat`、`swallow`。`flat_mode` 的 payload 新增 `live`。
 - 默认模式由 `DEFAULT_MODE='live'` 决定。依赖旧默认（列表）的测试已显式加上 `p._flat_mode='tasks'`：`test_scroll_clamps_and_never_rebuilds_scene`、`test_scrollbar_drag_reaches_last_row`、`test_native_composition`，以及新增的翻页测试。这三条依赖本机的 `pet`／`export_house_stage`，本包环境里没法运行，请在本机确认。
-- **取舍**：Agent 灯条（含 `house_trace` 入口）只在展开视图里保留；live 里每行自带 Agent 名和状态灯。需要在 live 里直接进 trace 的话，要另给入口。气泡会暂时盖住第一个 Agent 的名字和圆点，这是有意的：不另占版面。
+- **取舍**：Agent 灯条（含 `house_trace` 入口）只在展开视图里保留；live 里每行自带 Agent 名和状态灯。需要在 live 里直接进 trace 的话，要另给入口。
 - 圆点配色依赖 `moon_board.workflow` 返回的步骤 status（`COLORS` 的键）；本包里没有该模块，未用真实数据验证。`six-row-workflow.patch` 不包含 live 视图。
 - **`rows_for(ui,'live')` 仍返回全部会话**（不是每个 Agent 一行）：`agent_reactions.Reactor` 要跟踪每个会话的状态变化，契约测试 `test_live_rows_feed_the_reaction_rules_without_adapting` 依赖它。画面用的是 `agent_rows`。
 ## 质感：透明度与形状灯
@@ -77,7 +77,7 @@
 **本机接线**（建议顺序）
 1. 设置项 `agent_companion`：`off`／`few`（默认）／`normal`，读写方式照 `battery_watch`（`pet.py:1005,1375,4064`）。
 2. `_agent_tick`：每 1–2 秒调用 `Reactor.update(now, rows, quota_rows(ui), ctx)`。`rows` 直接用 `flat_workspace.rows_for(ui,'live')`（已有 `id/agent/state`，stale 已折成 idle；`test_live_rows_feed_the_reaction_rules_without_adapting` 保证这个契约）。`ctx` 取：`focus=self.focus_mode()`、`sleeping=self.state in ('sleep','yawn')`、`dragging`、`singing`、`bubble_busy=bool(self.bubble)`、`cursor_near`、`watching_agent`（用 `_fg_bucket` 判断前台是否是 Agent 的终端；Windows Terminal 的标题未必含「terminal」，需实测）。
-3. `_agent_react(r)`：`say` 用 `self.say(r.say, 2.6)`——**不要用 `_reply`**，它会写聊天记录、走 TTS，还绕开专注期缩短；`emotion` 用 `if not self.play_emotion(r.emotion, 2.4) and r.fallback: self.play_emotion(r.fallback, 2.4)`（`play_emotion` 对不存在的类别返回 False）；`motion` → `_start_micro_motion`；`effects`：`hop`→`self.hop(0.4)`，`star_burst`→`self.star_burst(0.22, -0.2, 3)`，`sweat`→`self.add_part("sweat", …)`（用法见 `pet.py:2120`），`stretch`→`self.start_stretch()`；`sfx` 仅 `normal` 档保留，值是 `assets/audio` 的前缀。说话的同时把 `r.say` 设给 `owner._flat_bubble`（气泡消失时设回 `None`），工作台顶部的气泡就是它的承载处；宿主自己画的气泡要不要同时保留，由你决定，避免同一句话出现两次。
+3. `_agent_react(r)`：`say` 用 `self.say(r.say, 2.6)`——**不要用 `_reply`**，它会写聊天记录、走 TTS，还绕开专注期缩短；`emotion` 用 `if not self.play_emotion(r.emotion, 2.4) and r.fallback: self.play_emotion(r.fallback, 2.4)`（`play_emotion` 对不存在的类别返回 False）；`motion` → `_start_micro_motion`；`effects`：`hop`→`self.hop(0.4)`，`star_burst`→`self.star_burst(0.22, -0.2, 3)`，`sweat`→`self.add_part("sweat", …)`（用法见 `pet.py:2120`），`stretch`→`self.start_stretch()`；`sfx` 仅 `normal` 档保留，值是 `assets/audio` 的前缀。
 4. 拉取：`pet_head`（`pet.py:1602`）里调 `pull(now,'head',rows,ctx)`；`just_approached` 那一段（`pet.py:5822` 附近，现在是「在叫我吗?」）先试 `pull(now,'approach',…)`，没有便条再走原来的好奇反应。
 5. 新增情绪类别 `care`：在 `assets/emotions.json` 加 `"care": ["comfort"]`。现有的 `tired`／`lazy` 里虽有「辛苦啦」，但同一类别还会抽到「晚安」「摸鱼中」，用来安慰出错不合适。注意 `random_emotion`（`pet.py:3171`）会把新类别也抽进去，README 里的「20 类」也要同步成 21。不加的话，`error` 会回退到 `mild`。**本次没有改公开的 `emotions.json` 和 README。**
 6. 与 `zcode_notify.py` 共存：hook 里 `permission` 的播报是有意不限频的（「漏一次就可能干等」），而 `waiting` 来自会话快照，带去抖和间隔。两条同时开会对同一件事说两次。建议：桌宠在运行且快照能看到该会话时，让 `waiting` 负责；hook 保留作为桌宠没开时的拉起路径。另外 `_exec_cmd` 的 `announce`（`pet.py:5329`）现在直接走 `_reply`，**不遵守专注／睡眠**，迁移后也应补上这道门。`pet_cmd.json` 是单槽文件，多个 Agent 几乎同时写入会互相覆盖，未验证实际是否会丢消息。

@@ -189,23 +189,12 @@ class FlatTests(unittest.TestCase):
   def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
   self.assertTrue(bright(lx,lx+30,f.LROW0,f.LROW0+14))                                   # '第 N 步' right after the dots
   self.assertFalse(bright(173+f.RX,176+f.RX+8,2,8))                                       # nothing is drawn where the title used to be
- def test_her_bubble_covers_the_top_only_when_she_has_something_to_say(self):
-  def white(im):return sum(1 for q in im.crop((178+f.RX,f.PY+2,420,f.PY+27)).getdata() if q[3]>200 and q[0]>225 and q[1]>225 and q[2]>235)
-  ui=self.trio();quiet,_,_=f.render(ui,1,'live');ui['bubble']='ZCode 有个确认在等你哦';said,_,_=f.render(ui,1,'live')
-  self.assertEqual(white(quiet),0);self.assertGreater(white(said),200)
-  ui['bubble']='很长很长的一句话'*30;long,_,_=f.render(ui,1,'live')
-  self.assertEqual(len(set(long.crop((425,f.PY+18,438,f.PY+27)).getdata())),1)           # a long line is cut, never spilling into the right margin
  def test_a_finished_row_has_no_arrow_and_a_live_row_has_one(self):
   def after_the_text(row_state):                                                      # only the arrow and the '…' can be here: the 3-char step title ends near x=232
    u=self.trio();u['sessions']=[dict(x,state=row_state) if x['id']=='c1' else x for x in u['sessions']];im,_,_=f.render(u,2,'live')
    y=f.PY+f.LROW0+f.LPITCH+17
    return sum(1 for q in im.crop((236*2,round(y*2),330*2,round((y+14)*2))).getdata() if q[3]>200 and sum(q[:3])>300)
   self.assertGreater(after_the_text('running'),10);self.assertEqual(after_the_text('done'),0)
- def test_a_long_bubble_covers_the_chat_button_completely_and_is_itself_the_chat_button(self):
-  def accent(im):return sum(1 for q in im.crop((396,f.PY+f.LROW0-2,424,f.PY+f.LROW0+16)).getdata() if q[3]>200 and q[2]>220 and 150<q[0]<210 and 140<q[1]<190)
-  ui=self.trio();plain,_,_=f.render(ui,1,'live');ui['bubble']='短话';short,_,_=f.render(ui,1,'live');ui['bubble']='很长很长的一句话，'*12;long,hits,_=f.render(ui,1,'live')
-  self.assertGreater(accent(plain),3);self.assertGreater(accent(short),3);self.assertEqual(accent(long),0)     # a short bubble leaves the button alone; a long one hides it whole, no stray glyph
-  self.assertEqual(hits[0][4],'house_chat');self.assertGreaterEqual(hits[0][2],round((424-(178+f.RX))*1))     # and tapping the bubble opens the chat
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
