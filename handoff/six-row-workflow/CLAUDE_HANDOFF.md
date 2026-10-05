@@ -32,6 +32,10 @@
 - test_flat_workspace.py：行数、交互、来源映射、真实灯态与 live 视图测试。
 - six-row-workflow.patch：较早的六行间距差异，只覆盖压缩列表，不包含这里新增的 Agent 切换实现。需要 Agent 切换时以当前完整 flat_workspace.py 和测试为准。
 
+## 图像素材
+
+索引和预览见 assets/INDEX.md；包含本机项目已有的 48 张图像、6 张工作台截图/模拟预览，以及文件相对路径清单。
+
 ## 仓库背景
 
 目标仓库是 https://github.com/shuai9928/xiaoqiao-desktop-pet。公开 main 目前不含这套半高工作台基线；本机工作区与公开 main 没有共同 Git 历史。这个分支是交接参考，不是可直接运行的完整仓库，也不应合并到 main 来代替本机项目基线。
