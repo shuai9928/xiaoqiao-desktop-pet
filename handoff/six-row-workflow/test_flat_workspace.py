@@ -21,6 +21,11 @@ class FlatTests(unittest.TestCase):
   for off in range(0,23*18,48):
    _,hits,_=f.render(ui,1,'tasks',off);ids.update(h[-1] for h in hits if h[4]=='flat_task')
   self.assertEqual(ids,{str(i) for i in range(23)})
+ def test_track_click_pages_by_one_full_window(self):
+  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)});page=f.LIST[3]
+  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,page)
+  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,2*page)
+  self.assertTrue(f.action(p,'flat_page',-1));self.assertEqual(p._flat_scroll,page)
  def test_steps_include_all_acquired_turns(self):
   ui=self.ui();ui['sel_session']['actions']=[{'a':f'Step{i}','r':'OK','t':ui['now']-i} for i in range(40)]
   ids=set()
@@ -36,13 +41,30 @@ class FlatTests(unittest.TestCase):
   _,hits,_=f.render(self.ui(),1.5,'tasks',48)
   for x,y,w,h,kind,_ in hits:
    if kind=='flat_task':self.assertGreaterEqual(y,63);self.assertLessEqual(y+h,225)
- def test_track_click_pages_by_one_full_window(self):
-  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)});page=f.LIST[3]
-  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,page)
-  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,2*page)
-  self.assertTrue(f.action(p,'flat_page',-1));self.assertEqual(p._flat_scroll,page)
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
+ def test_provider_selection_filters_workflow_and_steps(self):
+  ui=snapshot();z=ui['sel_session']
+  codex=copy.deepcopy(z);codex.update(id='codex-1',agent='wslcodex',title='Codex任务',updated=ui['now']+2)
+  codex['actions']=[{'t':ui['now'],'a':'Codex步骤','r':'运行中'}]
+  claude=copy.deepcopy(z);claude.update(id='claude-1',agent='mac-claude',title='Claude任务',updated=ui['now']+1)
+  claude['actions']=[{'t':ui['now'],'a':'Claude步骤','r':'等待中'}]
+  ui['sessions']=[z,codex,claude];ui['flat_agent']='Codex'
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['Codex步骤'])
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'steps')],['Codex步骤'])
+  ui['flat_agent']='Claude'
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['Claude步骤'])
+ def test_agent_strip_always_offers_codex_and_claude(self):
+  ui=snapshot();ui['flat_agent']='Codex'
+  self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','running')])
+  _,hits,_=f.render(ui)
+  self.assertEqual([h[-1] for h in hits if h[4]=='flat_agent'],['Codex','Claude','ZCode'])
+ def test_agent_switch_resets_list_and_selects_matching_source(self):
+  p=ui_owner();ui=snapshot();c=copy.deepcopy(ui['sel_session']);c.update(id='codex-task',agent='mac-codex')
+  ui['sessions'].append(c);p._swing={'ui':ui};p._flat_scroll=54;p._flat_mode='steps'
+  self.assertTrue(f.action(p,'flat_agent','Codex'))
+  self.assertEqual((p._flat_agent,p._flat_mode,p._flat_scroll),('Codex','tasks',0))
+  self.assertEqual(p._book_sel,('agent','mac-codex'))
  def test_real_unknown_no_fake_rows(self):
   _,hits,_=f.render({});self.assertFalse(any(h[4] in ('flat_task','detail') for h in hits));self.assertEqual(len(f.quota_rows({})),2)
  def test_scrollbar_drag_reaches_last_row(self):
@@ -67,10 +89,10 @@ class QuotaAndLightsTests(unittest.TestCase):
   self.assertEqual(len(f.rows_for(ui,'tasks')),1)
  def test_running_lamp_survives_other_session_error(self):
   ui=snapshot();ui['sessions'].append(dict(ui['sel_session'],id='error',state='error'))
-  self.assertEqual(f.agent_lights(ui),[('ZCode','running')])
+  self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','running')])
  def test_stale_agent_never_shows_running(self):
-  ui=snapshot();self.assertEqual(f.agent_lights(ui),[('ZCode','running')]);ui['now']+=9000
-  self.assertEqual(f.agent_lights(ui),[('ZCode','idle')])
+  ui=snapshot();self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','running')]);ui['now']+=9000
+  self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','idle')])
  def test_current_actions_not_project_names(self):
   ui=snapshot();rows=f.rows_for(ui,'tasks');self.assertEqual(rows[0]['title'],'生成预览');self.assertNotIn('completed',rows[0])
  def test_recent_step_first_with_absolute_detail_indexes(self):
@@ -91,3 +113,4 @@ class QuotaAndLightsTests(unittest.TestCase):
   self.assertEqual(ui['quota_widget'][0]['cycles'][0]['used'],50);self.assertTrue(ui['quota_widget'][0]['cycles'][0]['stale'])
 
 if __name__=='__main__':unittest.main()
+
