@@ -32,6 +32,12 @@
 - test_flat_workspace.py：行数、交互、来源映射、真实灯态与 live 视图测试。
 - six-row-workflow.patch：较早的六行间距差异，只覆盖压缩列表，不包含这里新增的 Agent 切换实现。需要 Agent 切换时以当前完整 flat_workspace.py 和测试为准。
 
+## 验证状态
+
+- 工作台定向测试通过。
+- 本机全量测试运行 448 项：445 项通过、2 项跳过、1 项失败。
+- 未解决失败：`test_core_runtime.CoreRuntimeTests.test_shipped_profile_renders_and_keeps_retired_data_dormant`。测试期望 `exported['ai_panel']['codex_quota_connected']` 为 `False`，实际为 `True`。
+- 该失败检查的是额度连接状态，与工作流 Agent 切换和图像素材交接无关；本次没有修改额度连接代码，因此保留为待排查项。
 ## 图像素材
 
 索引和预览见 assets/INDEX.md；包含本机项目已有的 48 张图像、6 张工作台截图/模拟预览，以及文件相对路径清单。
