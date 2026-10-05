@@ -15,7 +15,7 @@ class FlatTests(unittest.TestCase):
   for scale in (1,1.5):
    im,hits,off=f.render(self.ui(),scale)
    rows=[h for h in hits if h[4]=='flat_task'];self.assertEqual(len(rows),6)
-   self.assertTrue(all(h[3]==round(18*scale) for h in rows));self.assertEqual(im.size,(round(440*scale),round(260*scale)))
+   self.assertTrue(all(h[3]==round(18*scale) for h in rows));self.assertEqual(im.size,(round(f.W*scale),round(f.H*scale)))
  def test_every_task_reachable_no_hidden_cap(self):
   ui=self.ui(23);ids=set()
   for off in range(0,23*18,48):
@@ -40,7 +40,7 @@ class FlatTests(unittest.TestCase):
  def test_partial_rows_have_clipped_click_targets(self):
   _,hits,_=f.render(self.ui(),1.5,'tasks',48)
   for x,y,w,h,kind,_ in hits:
-   if kind=='flat_task':self.assertGreaterEqual(y,63);self.assertLessEqual(y+h,225)
+   if kind=='flat_task':self.assertGreaterEqual(y,round(f.LIST[1]*1.5));self.assertLessEqual(y+h,round((f.LIST[1]+f.LIST[3])*1.5))
  def mixed(self):
   u=self.ui(6);s=u['sel_session']
   u['sessions']=[dict(s,id=str(i),title=f'Task {i}',state=st) for i,st in enumerate(('running','waiting','error','done','done','idle'))];u['sel_session']=u['sessions'][0];return u
@@ -54,13 +54,14 @@ class FlatTests(unittest.TestCase):
   self.assertEqual([h[-1] for h in hits if h[4]=='flat_task'],['0']);self.assertEqual([(h[4],h[-1]) for h in hits if h[4] in ('flat_mode','flat_agent')],[('flat_agent','ZCode')])
  def test_live_mode_stays_in_compact_height_and_rest_is_transparent(self):
   for scale in (1,1.5):
-   im,hits,_=f.render(self.mixed(),scale,'live');cut=round(f.LIVE_H*scale)
-   self.assertEqual(im.size,(round(440*scale),round(260*scale)))
+   im,hits,_=f.render(self.mixed(),scale,'live');cut=round((f.PY+f.LIVE_H)*scale)
+   self.assertEqual(im.size,(round(f.W*scale),round(f.H*scale)))
    self.assertEqual(im.crop((0,cut,im.width,im.height)).getchannel('A').getextrema(),(0,0))
+   if f.PY:self.assertEqual(im.crop((0,0,im.width,round(f.PY*scale))).getchannel('A').getextrema(),(0,0))
    self.assertTrue(all(h[1]+h[3]<=cut for h in hits))
  def test_live_mode_has_no_scroll_and_switches_with_the_list(self):
   p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)},_flat_mode='live')
-  f.scroll(p,-120*50);self.assertFalse(getattr(p,'_flat_scroll',0));self.assertFalse(f.bar_input(p,SimpleNamespace(x=630,y=70),'press'))
+  f.scroll(p,-120*50);self.assertFalse(getattr(p,'_flat_scroll',0));self.assertFalse(f.bar_input(p,SimpleNamespace(x=630,y=100),'press'))
   self.assertTrue(f.action(p,'flat_mode','tasks'));self.assertEqual(p._flat_mode,'tasks')
   self.assertTrue(f.action(p,'flat_mode','live'));self.assertEqual(p._flat_mode,'live')
  def test_default_is_live_and_expanded_list_offers_collapse(self):
@@ -104,7 +105,7 @@ class FlatTests(unittest.TestCase):
      if alpha:ui['panel_alpha']=alpha
      im,_,_=f.render(ui,u,mode)
      self.assertEqual(im.getpixel((round(30*u),round(100*u)))[3],alpha or f.PANEL_REST,(mode,u,alpha))
-     self.assertEqual(im.getpixel((round(220*u),0))[3],255)
+     self.assertEqual(im.getpixel((round(220*u),round(f.PY*u)))[3],255)
  def test_alpha_tier_follows_mode_attention_and_hover(self):
   o=SimpleNamespace();calm=self.ui(2)
   self.assertEqual(f.panel_alpha(o,calm,'live'),f.PANEL_REST);self.assertEqual(f.panel_alpha(o,calm,'tasks'),f.PANEL_ACTIVE)
@@ -116,6 +117,29 @@ class FlatTests(unittest.TestCase):
   a=f.PANEL_REST/255;bg=lum('#%02x%02x%02x'%tuple(round(a*int(f.BG[i:i+2],16)+(1-a)*255) for i in (1,3,5)))
   ratio=lambda c:(max(bg,lum(c))+.05)/(min(bg,lum(c))+.05)
   self.assertGreaterEqual(ratio(f.INK),7);self.assertGreaterEqual(ratio(f.DIM),4.5);self.assertGreaterEqual(ratio(f.COLORS['error']),4.5)
+ def test_layout_constants_are_consistent(self):
+  self.assertEqual(f.H,f.PH+f.PY);self.assertEqual(f.LIST[0]+f.LIST[2],424)
+  self.assertGreaterEqual(f.LIST[1],f.PY);self.assertLessEqual(f.LIST[1]+f.LIST[3],f.PY+158)
+  self.assertGreaterEqual(f.PET_TOP,0)                                # she stays inside the window
+  if f.PY:self.assertLess(f.PET_TOP,f.PY)                             # with headroom, her hat rises above the panel
+  self.assertLessEqual(f.PET_TOP+f.PET_BOX[1],f.PY+158)               # and stands above the agent strip when expanded
+  self.assertLess(f.PET_CX+f.PET_BOX[0]/2,f.LIST[0])                  # never reaches the step column
+ def test_hits_stay_inside_the_window(self):
+  for mode in ('live','tasks','steps'):
+   for scale in (1,1.5):
+    im,hits,_=f.render(self.mixed(),scale,mode)
+    for x,y,w,h,kind,_ in hits:
+     self.assertTrue(x>=0 and y>=0 and x+w<=im.width and y+h<=im.height,(mode,scale,kind,x,y,w,h))
+     if kind in ('flat_task','detail') and mode!='live':self.assertLessEqual(x+w,round(414*scale))   # rows end before the scrollbar
+ def test_long_step_title_is_cut_before_the_right_edge(self):
+  u=self.mixed();s=u['sessions'][0];s['actions']=[{'a':'很长很长的步骤标题'*8,'r':'OK','t':u['now']-1}];u['sel_session']=s
+  im,_,_=f.render(u,1,'live');band=im.crop((421,f.PY+36,432,f.PY+56))
+  self.assertFalse(any(r>200 and g>200 and b>200 and a>200 for r,g,b,a in band.getdata()))
+ def test_step_count_sits_on_the_chain_row_not_at_the_right_edge(self):
+  ui=self.mixed();r=f.rows_for(ui,'live')[0];n=min(len(r['chain']),6);x0=(208 if len(r['chain'])>6 else 190)+f.RX;lx=x0+13*(n-1)+14
+  im,_,_=f.render(ui,1,'live')
+  def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
+  self.assertTrue(bright(lx,lx+30,56,70));self.assertFalse(bright(395,421,36,50))
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
@@ -144,14 +168,14 @@ class FlatTests(unittest.TestCase):
   _,hits,_=f.render({});self.assertFalse(any(h[4] in ('flat_task','detail') for h in hits));self.assertEqual(len(f.quota_rows({})),2)
  def test_scrollbar_drag_reaches_last_row(self):
   p=ui_owner();p._flat_panel_style=True;p._swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(9)};p._flat_mode='tasks'
-  self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=70),'press'))
+  self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=100),'press'))
   self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=225),'move'))
   self.assertEqual(p._flat_scroll,54)
   self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=225),'release'))
   self.assertIsNone(p._flat_bar_drag)
  def test_native_composition(self):
   p=owner(1.25);p.sw,p.sh=2880,1800;p._flat_panel_style=True;p._studio_style=True;p._house_on=False;p.settings={};p._flat_mode='tasks'
-  g=p._art_geo(1);self.assertEqual(g['size'],(660,390));p._swing={'geo':g,'theta':0,'scene_l':0,'scene_t':0,'ui':self.ui(),'art':True}
+  g=p._art_geo(1);self.assertEqual(g['size'],(660,round(f.H*1.5)));p._swing={'geo':g,'theta':0,'scene_l':0,'scene_t':0,'ui':self.ui(),'art':True}
   with patch('pet.push_layered'):p._push_swing_art(Image.new('RGBA',(p.W,p.H)))
   self.assertEqual(sum(h[4]=='flat_task' for h in p._swing['ui_hits']),6)
   before=p._flat_cache;p._swing['ui']['now']+=.01

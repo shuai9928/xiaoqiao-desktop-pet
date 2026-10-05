@@ -8,10 +8,12 @@ from moon_board import workflow,_fit
 
 BG='#1d1e2e';SURFACE='#2b2c32';LINE='#363850';INK='#f4f5fc';DIM='#b4b7cc';ACCENT='#baa3ed';RIM='#666b96'
 COLORS={'running':ACCENT,'waiting':'#efba70','error':'#f39292','done':'#83caa2','idle':DIM,'recorded':DIM}
-W,H=440,260
+RX=27;PY=14;PH=260   # RX: extra width of the pet column; PY: headroom above the panel (her hat rises into it); PH: expanded panel height
+W,H=440,PH+PY
 PANEL_REST=232;PANEL_ACTIVE=248   # per-pixel alpha of the panel fill (not blur); rim, glyphs and text stay opaque
 SHAPES={'running':'star','waiting':'ring','error':'tri','done':'dot','idle':'dot','recorded':'dot'}
-LIST=(170,42,254,108)
+LIST=(170+RX,42+PY,254-RX,108);RW=LIST[2]-14   # window coordinates; RW = row width
+PET_BOX=(170,168);PET_CX=95;PET_TOP=1   # her box (was 142x140 at cx 82, top 15)
 ROW=18
 AGENT_ORDER=('Codex','Claude','ZCode')
 LIVE_H=170;LIVE_ROWS=2;LIVE=('running','waiting','error');DEFAULT_MODE='live'
@@ -67,9 +69,9 @@ def geometry(owner, geo):
     from pet import ChatBox
     u=ChatBox._layout(owner.sw,owner.sh)[0]
     sa=owner._scene_art;stand=owner._studio();bx,by,ex,ey=stand.bounds()
-    k=min(142*u/(ex-bx),140*u/(ey-by))
+    k=min(PET_BOX[0]*u/(ex-bx),PET_BOX[1]*u/(ey-by))
     gb=sa.girl_bbox;sprh=owner._spr_disp_h();ss=k*(gb[3]-gb[1])/sprh
-    cx=82*u;top=15*u
+    cx=PET_CX*u;top=PET_TOP*u
     O=((bx+ex)*k/2-cx,by*k-top)
     geo.update(k=k,ss=ss,O=O,size=(round(W*u),round(H*u)),flat=True,u=u,
                gtl=(gb[0]*k,gb[1]*k),anchor=((gb[0]+gb[2])/2*k,(gb[1]+(gb[3]-gb[1])*.45)*k))
@@ -209,10 +211,10 @@ def action(owner,kind,payload):
 def _pen(u):
     im=Image.new('RGBA',(round(W*u),round(H*u)));d=ImageDraw.Draw(im);hits=[]
     def box(rect,color,r=0,outline=None):
-        x,y,a,b=rect;d.rounded_rectangle(tuple(round(v*u) for v in (x,y,x+a,y+b)),radius=round(r*u),fill=color,outline=outline,width=1)
+        x,y,a,b=rect;y+=PY;d.rounded_rectangle(tuple(round(v*u) for v in (x,y,x+a,y+b)),radius=round(r*u),fill=color,outline=outline,width=1)
     def txt(x,y,s,size=13,color=INK,width=None,weight=450,anchor='la'):
-        f=font(round(size*u),weight);d.text((round(x*u),round(y*u)),_fit(s,f,width*u) if width else str(s),font=f,fill=color,anchor=anchor)
-    def hit(rect,kind,payload=None):hits.append(tuple(round(v*u) for v in rect)+(kind,payload))
+        f=font(round(size*u),weight);d.text((round(x*u),round((y+PY)*u)),_fit(s,f,width*u) if width else str(s),font=f,fill=color,anchor=anchor)
+    def hit(rect,kind,payload=None):hits.append(tuple(round(v*u) for v in (rect[0],rect[1]+PY,rect[2],rect[3]))+(kind,payload))
     return im,d,hits,box,txt,hit
 
 
@@ -252,52 +254,53 @@ def live_title(rows):
 
 def render_live(ui,u=1):
     """Compact view: live sessions of every agent, a dot chain per session, quota in the right column.
-    Draws in the top LIVE_H of the same window; the rest stays transparent so the window size is unchanged."""
+    The panel is drawn at y=PY..PY+LIVE_H of the same window; the headroom above (her hat) and the rest below stay transparent."""
     im,d,hits,box,txt,hit=_pen(u)
+    gl=lambda cx,cy,*a,**k:glyph(im,cx,cy+PY,*a,**k)
     rows=rows_for(ui,'live');live=[r for r in rows if r['state'] in LIVE];shown=live[:LIVE_ROWS]
     box((0,0,W-1,LIVE_H-1),panel_fill(ui),16,RIM)
-    txt(173,13,live_title(rows),13,width=205,weight=550)
+    txt(173+RX,13,live_title(rows),13,width=190,weight=550)
     txt(420,14,'聊聊',11,ACCENT,anchor='ra');hit((386,7,40,30),'house_chat')
     for i,row in enumerate(shown):
-        y=38+i*32;col=COLORS.get(row['state'],DIM);idx=row['index'];chain=row['chain'];cut=len(chain)>6;chain=chain[-6:];x0=208 if cut else 190
-        glyph(im,175,y+8,3.5,col,SHAPES.get(row['state'],'dot'),u)
-        txt(186,y,row['agent'],11,NAMES.get(row['agent'],'#b9c6e5'),width=40)
-        txt(228,y-1,row['title'],12,width=148)
-        txt(420,y,f"第 {idx+1 if isinstance(idx,int) else len(chain)} 步",10,DIM,anchor='ra')
-        if cut:glyph(im,190,y+23,1.3,'#656772','dot',u);glyph(im,195,y+23,1.3,'#656772','dot',u)
+        y=38+i*32;col=COLORS.get(row['state'],DIM);idx=row['index'];chain=row['chain'];cut=len(chain)>6;chain=chain[-6:];x0=(208 if cut else 190)+RX
+        gl(175+RX,y+8,3.5,col,SHAPES.get(row['state'],'dot'),u)
+        txt(186+RX,y,row['agent'],11,NAMES.get(row['agent'],'#b9c6e5'),width=40)
+        txt(228+RX,y-1,row['title'],12,width=420-(228+RX))
+        if cut:gl(190+RX,y+23,1.3,'#656772','dot',u);gl(195+RX,y+23,1.3,'#656772','dot',u)
         if len(chain)>1:box((x0,y+23,13*(len(chain)-1),1),'#4a4b54')
         for j,st in enumerate(chain):
             last=j==len(chain)-1
-            if last:glyph(im,x0+j*13,y+23.5,4.2,col,SHAPES.get(row['state'],'dot'),u,True)
-            else:glyph(im,x0+j*13,y+23.5,2.6 if st in ('done','idle') else 3.1,COLORS.get(st,DIM),SHAPES.get(st,'dot'),u)
-        hit((172,y-4,252,30),'flat_task',row['id'])
-    if not shown:txt(186,56,'现在没有在跑的任务' if rows else '暂无步骤记录',12,DIM,width=225)
+            if last:gl(x0+j*13,y+23.5,4.2,col,SHAPES.get(row['state'],'dot'),u,True)
+            else:gl(x0+j*13,y+23.5,2.6 if st in ('done','idle') else 3.1,COLORS.get(st,DIM),SHAPES.get(st,'dot'),u)
+        txt(x0+13*(len(chain)-1)+14,y+18,f"第 {idx+1 if isinstance(idx,int) else len(chain)} 步",11,DIM)
+        hit((172+RX,y-4,252-RX,30),'flat_task',row['id'])
+    if not shown:txt(186+RX,56,'现在没有在跑的任务' if rows else '暂无步骤记录',12,DIM,width=225-RX)
     rest=len(rows)-len(shown)
     if rest>0:
         y=38+len(shown)*32+2 if shown else 82;go=rows[0]['agent']
-        txt(186,y,f"另有 {rest} 个{'会话' if len(live)>len(shown) else '已结束'} · 展开",10.5,DIM,width=200)
-        d.polygon([(round(410*u),round((y+6)*u)),(round(418*u),round((y+6)*u)),(round(414*u),round((y+11)*u))],fill=DIM)
-        hit((172,y-3,252,18),*(('flat_agent',go) if go in AGENT_ORDER else ('flat_mode','tasks')))
-    box((173,121,251,1),LINE)
+        txt(186+RX,y,f"另有 {rest} 个{'会话' if len(live)>len(shown) else '已结束'} · 展开",10.5,DIM,width=200-RX)
+        d.polygon([(round(410*u),round((y+6+PY)*u)),(round(418*u),round((y+6+PY)*u)),(round(414*u),round((y+11+PY)*u))],fill=DIM)
+        hit((172+RX,y-3,252-RX,18),*(('flat_agent',go) if go in AGENT_ORDER else ('flat_mode','tasks')))
+    box((173+RX,121,251-RX,1),LINE)
     for i,row in enumerate(quota_rows(ui)[:2]):
-        y=128+i*17;txt(173,y,row['name'],11,NAMES.get(row['name'],'#b9c6e5'),width=42)
-        if not row['cycles']:txt(217,y,'暂无数据',11,DIM)
+        y=128+i*17;txt(173+RX,y,row['name'],11,NAMES.get(row['name'],'#b9c6e5'),width=42)
+        if not row['cycles']:txt(213+RX,y,'暂无数据',11,DIM)
         for j,c in enumerate(row['cycles'][:2]):
-            x=217+j*84;v=c['used'];stale=c['stale'];col=DIM if stale else COLORS['error'] if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
-            txt(x,y,c['label'],10,DIM);box((x+13,y+10,30,4),LINE,2)
-            if v is not None and v>0:box((x+13,y+10,max(2,30*v/100),4),col,2)
-            txt(x+78,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
+            x=213+RX+j*76;v=c['used'];stale=c['stale'];col=DIM if stale else COLORS['error'] if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
+            txt(x,y,c['label'],10,DIM);box((x+13,y+10,24,4),LINE,2)
+            if v is not None and v>0:box((x+13,y+10,max(2,24*v/100),4),col,2)
+            txt(x+72,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
     txt(420,129,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
-    hit((172,120,252,46),'swallow')
+    hit((172+RX,120,252-RX,46),'swallow')
     return im,[q for q in hits if q[2]>0 and q[3]>0],0
 
 
 def render(ui,u=1,mode='tasks',offset=0):
     if mode=='live':return render_live(ui,u)
     im,d,hits,box,txt,hit=_pen(u)
-    box((0,0,W-1,H-1),panel_fill(ui),16,RIM)
+    box((0,0,W-1,PH-1),panel_fill(ui),16,RIM)
     agent=selected_agent(ui)
-    txt(173,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=185)
+    txt(173+RX,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=185-RX)
     txt(420,14,'返回' if mode=='steps' else '聊聊',11,ACCENT,anchor='ra')
     hit((386,7,40,30),'flat_mode' if mode=='steps' else 'house_chat','tasks' if mode=='steps' else None)
     if mode=='tasks':txt(384,14,'收起',11,ACCENT,anchor='ra');hit((350,7,34,30),'flat_mode','live')
@@ -306,23 +309,23 @@ def render(ui,u=1,mode='tasks',offset=0):
     for i,row in enumerate(rows):
         yy=i*ROW-offset
         if yy+ROW<=0 or yy>=LIST[3]:continue
-        tile=Image.new('RGBA',(round(240*u),round(ROW*u)));td=ImageDraw.Draw(tile)
+        tile=Image.new('RGBA',(round(RW*u),round(ROW*u)));td=ImageDraw.Draw(tile)
         col=COLORS.get(row['state'],DIM)
         glyph(tile,5,ROW/2,3.2,col,SHAPES.get(row['state'],'dot'),u)
         f=font(round(12*u),450)
-        td.text((17*u,ROW*u/2),_fit(row['title'],f,218*u),font=f,fill=INK,anchor='lm')
+        td.text((17*u,ROW*u/2),_fit(row['title'],f,(RW-22)*u),font=f,fill=INK,anchor='lm')
         src=max(0,round(-yy*u));dst=max(0,round(yy*u));height=min(tile.height-src,crop.height-dst)
         if height>0:crop.alpha_composite(tile.crop((0,src,tile.width,src+height)),(0,dst))
         kind,payload=('flat_task',row['id']) if mode=='tasks' else ('detail',(row['id'],row['index'],row['title'],row.get('result','')))
-        hit((LIST[0],LIST[1]+max(0,yy),240,min(ROW+min(0,yy),LIST[3]-max(0,yy))),kind,payload)
+        hit((LIST[0],LIST[1]-PY+max(0,yy),RW,min(ROW+min(0,yy),LIST[3]-max(0,yy))),kind,payload)
     im.alpha_composite(crop,(round(LIST[0]*u),round(LIST[1]*u)))
-    if not rows:txt(185,76,'暂无步骤记录',12,DIM,width=225)
+    if not rows:txt(185+RX,76,'暂无步骤记录',12,DIM,width=225-RX)
     if n*ROW>LIST[3]:
-        thumb=max(20,LIST[3]**2/(n*ROW));ty=LIST[1]+offset/(n*ROW-LIST[3])*(LIST[3]-thumb)
-        box((419,LIST[1],3,LIST[3]),LINE,1);box((419,ty,3,thumb),'#8e8c98',1)
-        hit((414,LIST[1],10,max(0,ty-LIST[1])),'flat_page',-1)
-        hit((414,ty+thumb,10,max(0,LIST[1]+LIST[3]-ty-thumb)),'flat_page',1)
-    hit(LIST,'swallow')
+        thumb=max(20,LIST[3]**2/(n*ROW));ty=LIST[1]-PY+offset/(n*ROW-LIST[3])*(LIST[3]-thumb)
+        box((419,LIST[1]-PY,3,LIST[3]),LINE,1);box((419,ty,3,thumb),'#8e8c98',1)
+        hit((414,LIST[1]-PY,10,max(0,ty-LIST[1]+PY)),'flat_page',-1)
+        hit((414,ty+thumb,10,max(0,LIST[1]-PY+LIST[3]-ty-thumb)),'flat_page',1)
+    hit((LIST[0],LIST[1]-PY,LIST[2],LIST[3]),'swallow')
     box((16,158,408,1),LINE)
     txt(17,163,'Agent',10,DIM)
     lamps=agent_lights(ui)
@@ -330,7 +333,7 @@ def render(ui,u=1,mode='tasks',offset=0):
         x=66+i*67;col=COLORS[st] if st!='idle' else '#656772'
         if name==agent:
             box((x-3,159,62,23),'#35343d',5,ACCENT)
-        glyph(im,x+3.5,170.5,3.4,col,SHAPES.get(st,'dot'),u);txt(x+12,163,name,11,ACCENT if name==agent else INK if st!='idle' else DIM)
+        glyph(im,x+3.5,170.5+PY,3.4,col,SHAPES.get(st,'dot'),u);txt(x+12,163,name,11,ACCENT if name==agent else INK if st!='idle' else DIM)
         if name in AGENT_ORDER:hit((x-3,159,62,23),'flat_agent',name)
     hit((16,160,42,25),'house_trace')
     txt(420,164,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
