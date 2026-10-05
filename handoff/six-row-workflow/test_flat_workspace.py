@@ -140,6 +140,14 @@ class FlatTests(unittest.TestCase):
   im,_,_=f.render(ui,1,'live')
   def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
   self.assertTrue(bright(lx,lx+30,56,70));self.assertFalse(bright(395,421,36,50))
+ def test_live_rows_feed_the_reaction_rules_without_adapting(self):
+  import agent_reactions as ar
+  rows=f.rows_for(self.mixed(),'live');rr=ar.Reactor('few',day_of=lambda t:0)
+  self.assertEqual(rr.update(1000.0,rows),[])                                   # first sample is only a baseline
+  out=rr.update(1000.0+ar.WAIT_DWELL+1,rows)                                    # 'waiting' has now held long enough
+  self.assertEqual([(r.kind,r.agent) for r in out],[('waiting','ZCode')])
+  self.assertIsNone(rr.pull(1000.0+ar.WAIT_DWELL+2,'approach',rows))             # she has just spoken: the global gap holds
+  self.assertEqual(rr.pull(1000.0+ar.WAIT_DWELL+ar.GLOBAL_GAP+2,'approach',rows).kind,'error')   # then the errored one gets its touch
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):

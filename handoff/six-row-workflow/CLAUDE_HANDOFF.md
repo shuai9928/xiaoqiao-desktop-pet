@@ -52,10 +52,43 @@
   - 真实字体宽度（本包用文泉驿估算）：标题能容纳的字数、「Claude 5h」间隙。
   - 候选里更保守的做法（只放大 +9%，窗口不变）已被否决；若要回退，把 `RX`、`PY` 设为 0 并把 `PET_*` 改回 `(142,140)`、`82`、`15` 即可，测试会跟着常量走。
 
+## 互动：AI 陪跑规则（`agent_reactions.py`）
+
+原则：让 AI 状态在她身上「长出来」，而不是「播出来」。事件先变成肢体、贴纸、短句，再经统一的门放行；不紧急的话先攒着，等你摸她或靠近时再说。她永远只说 Agent 的名字，不念任务标题、路径或报错。
+
+这一节的**规则**已实现并有测试（纯逻辑，不依赖 Tk／PIL／时钟）；**接到 `pet.py` 是你本机的工作**，本包里没有那部分代码。结构照搬电量感知（`_battery_event` 是纯函数，`_battery_tick` 做门控，`_battery_react` 执行，`pet.py:4085-4139`）。
+
+**状态→反应**（`SPEC` 里的键名都对应 `pet.py` 里真实存在的东西；`level` 为 `few` 只做标★的行）
+
+| 变化 | 她做什么 | 备注 |
+| --- | --- | --- |
+| 开始运行 | 偏头看一眼（`_start_micro_motion("notice")`），10 分钟内一次，不说话 | 仅 `normal` |
+| 变成「等确认」 | 先偏头；持续 20 秒后「在吗」类贴纸（`curious`）＋ `hop` ＋ 一句话，只说一次；10 分钟后仍未处理再提一次，之后不再提 ★ | 睡眠／专注时丢弃，不补播 |
+| 出错 | 面板亮红灯，她不动；持续 10 秒后记成便条，**等你摸她或靠近**才安慰：`care` 贴纸＋一滴 `sweat`＋一句 ★ | 不念报错内容 |
+| 完成 | 运行满 90 秒才算；先飘几点星光（`star_burst`）不说话，便条里存一句，靠近时说（`proud`）；20 秒内多个完成合并成一句 | 仅 `normal`；过期（stale）变成的 idle 不算完成 |
+| 额度 ≥90% | 只在跨线那一次提一句（`mild`）；有任务在跑时先存成便条；回落到 70% 以下才重新武装 | 仅 `normal`；过期读数不告警 |
+| 运行满 20 分钟 | `start_stretch()`，每个会话一次，仅 idle 时 | 仅 `normal` |
+| 你问「进度／在忙吗」 | 按名字和数量汇报，不念标题；任何档位都回答（睡着、被拖动时除外） | 加进 `PET_ACTIONS`（`pet.py:3468`） |
+
+**门**（全部在 `Reactor` 里，测试覆盖）：首次采样只记基线，不会启动即播报；专注／睡眠／拖动／唱歌时丢弃而不是攒着；用户正看着 Agent 的窗口时不提醒；气泡占用时存成便条而不是覆盖；全局两句话至少间隔 120 秒、每天最多 10 句（按本地日期重置）；便条 30 分钟过期，问题解决了就取消；摸头只有 25% 概率触发、2 分钟冷却；靠近 1 分钟冷却，专注中靠近不触发，但摸头仍可（那是你主动的）。以上数字全是猜的，请在本机调；它们都是模块顶部的常量。
+
+**本机接线**（建议顺序）
+1. 设置项 `agent_companion`：`off`／`few`（默认）／`normal`，读写方式照 `battery_watch`（`pet.py:1005,1375,4064`）。
+2. `_agent_tick`：每 1–2 秒调用 `Reactor.update(now, rows, quota_rows(ui), ctx)`。`rows` 直接用 `flat_workspace.rows_for(ui,'live')`（已有 `id/agent/state`，stale 已折成 idle；`test_live_rows_feed_the_reaction_rules_without_adapting` 保证这个契约）。`ctx` 取：`focus=self.focus_mode()`、`sleeping=self.state in ('sleep','yawn')`、`dragging`、`singing`、`bubble_busy=bool(self.bubble)`、`cursor_near`、`watching_agent`（用 `_fg_bucket` 判断前台是否是 Agent 的终端；Windows Terminal 的标题未必含「terminal」，需实测）。
+3. `_agent_react(r)`：`say` 用 `self.say(r.say, 2.6)`——**不要用 `_reply`**，它会写聊天记录、走 TTS，还绕开专注期缩短；`emotion` 用 `if not self.play_emotion(r.emotion, 2.4) and r.fallback: self.play_emotion(r.fallback, 2.4)`（`play_emotion` 对不存在的类别返回 False）；`motion` → `_start_micro_motion`；`effects`：`hop`→`self.hop(0.4)`，`star_burst`→`self.star_burst(0.22, -0.2, 3)`，`sweat`→`self.add_part("sweat", …)`（用法见 `pet.py:2120`），`stretch`→`self.start_stretch()`；`sfx` 仅 `normal` 档保留，值是 `assets/audio` 的前缀。
+4. 拉取：`pet_head`（`pet.py:1602`）里调 `pull(now,'head',rows,ctx)`；`just_approached` 那一段（`pet.py:5822` 附近，现在是「在叫我吗?」）先试 `pull(now,'approach',…)`，没有便条再走原来的好奇反应。
+5. 新增情绪类别 `care`：在 `assets/emotions.json` 加 `"care": ["comfort"]`。现有的 `tired`／`lazy` 里虽有「辛苦啦」，但同一类别还会抽到「晚安」「摸鱼中」，用来安慰出错不合适。注意 `random_emotion`（`pet.py:3171`）会把新类别也抽进去，README 里的「20 类」也要同步成 21。不加的话，`error` 会回退到 `mild`。**本次没有改公开的 `emotions.json` 和 README。**
+6. 与 `zcode_notify.py` 共存：hook 里 `permission` 的播报是有意不限频的（「漏一次就可能干等」），而 `waiting` 来自会话快照，带去抖和间隔。两条同时开会对同一件事说两次。建议：桌宠在运行且快照能看到该会话时，让 `waiting` 负责；hook 保留作为桌宠没开时的拉起路径。另外 `_exec_cmd` 的 `announce`（`pet.py:5329`）现在直接走 `_reply`，**不遵守专注／睡眠**，迁移后也应补上这道门。`pet_cmd.json` 是单槽文件，多个 Agent 几乎同时写入会互相覆盖，未验证实际是否会丢消息。
+
+**刻意不做**：Stop 钩子每轮回答结束都会触发，不当「完成」播；逐步播报；红点／未读数／等级／成就；用任务数或额度去挂钩星光或好感；重复催促或递增语气；念任务标题或报错、用 TTS 读 AI 文本；叫醒睡着的她；事后补播。「陪跑时每几分钟无声闪一次星光、不自动入睡」也暂不做：收益模糊，且会让 20fps 档持续耗电（`EXPERIMENTS.md` E12）。
+
+**未验证**：时间阈值都是估计；会话数据在面板隐藏或睡眠低帧率时是否照常刷新、`waiting`↔`running` 会不会抖动、会话 `id` 是否稳定，都要在本机看；`care` 的贴纸效果、气泡与她出框后的帽尖是否冲突（气泡在窗口里的位置我没看到）。
+
 ## 文件
 
 - flat_workspace.py：当前工作台完整参考实现，包含 Agent 选择和工作流过滤。
-- test_flat_workspace.py：行数、交互、来源映射、真实灯态与 live 视图测试。
+- test_flat_workspace.py：行数、交互、来源映射、真实灯态、live 视图、透明度与布局测试。
+- agent_reactions.py：AI 陪跑规则（纯逻辑）；test_agent_reactions.py：其测试，可直接 `python -m unittest test_agent_reactions` 运行，不需要任何依赖。
 - six-row-workflow.patch：较早的六行间距差异，只覆盖压缩列表，不包含这里新增的 Agent 切换实现。需要 Agent 切换时以当前完整 flat_workspace.py 和测试为准。
 
 ## 验证状态
