@@ -86,6 +86,36 @@ class FlatTests(unittest.TestCase):
   self.assertEqual(f.live_title([{'state':'running'},{'state':'waiting'}]),'1 个在等你确认')
   self.assertEqual(f.live_title([{'state':'running'},{'state':'running'}]),'我看着呢 · 2 个在跑')
   self.assertEqual((f.live_title([{'state':'done'}]),f.live_title([])),('都忙完啦','暂时没有任务'))
+ def test_status_shapes_differ_not_only_in_colour(self):
+  from PIL import ImageChops
+  masks={}
+  for st in ('running','waiting','error','done'):
+   t=Image.new('RGBA',(40,40));f.glyph(t,20,20,3.5,'#ffffff',f.SHAPES[st],1.5);masks[st]=t.getchannel('A').point(lambda v:255 if v>127 else 0)
+  names=list(masks)
+  for i,a in enumerate(names):
+   for c in names[i+1:]:
+    inter=ImageChops.darker(masks[a],masks[c]).histogram()[255];union=ImageChops.lighter(masks[a],masks[c]).histogram()[255]
+    self.assertLess(inter/union,.8,(a,c))
+ def test_panel_alpha_is_per_pixel_and_rim_stays_opaque(self):
+  for mode in ('live','tasks'):
+   for u in (1,1.5):
+    for alpha in (None,248):
+     ui=self.mixed() if mode=='live' else self.ui()
+     if alpha:ui['panel_alpha']=alpha
+     im,_,_=f.render(ui,u,mode)
+     self.assertEqual(im.getpixel((round(30*u),round(100*u)))[3],alpha or f.PANEL_REST,(mode,u,alpha))
+     self.assertEqual(im.getpixel((round(220*u),0))[3],255)
+ def test_alpha_tier_follows_mode_attention_and_hover(self):
+  o=SimpleNamespace();calm=self.ui(2)
+  self.assertEqual(f.panel_alpha(o,calm,'live'),f.PANEL_REST);self.assertEqual(f.panel_alpha(o,calm,'tasks'),f.PANEL_ACTIVE)
+  self.assertEqual(f.panel_alpha(o,self.mixed(),'live'),f.PANEL_ACTIVE)
+  self.assertEqual(f.panel_alpha(SimpleNamespace(_flat_hover=True),calm,'live'),f.PANEL_ACTIVE)
+ def test_rest_alpha_keeps_text_readable_over_white(self):
+  def lum(c):
+   r,g,b=[int(c[i:i+2],16)/255 for i in (1,3,5)];r,g,b=[x/12.92 if x<=.03928 else ((x+.055)/1.055)**2.4 for x in (r,g,b)];return .2126*r+.7152*g+.0722*b
+  a=f.PANEL_REST/255;bg=lum('#%02x%02x%02x'%tuple(round(a*int(f.BG[i:i+2],16)+(1-a)*255) for i in (1,3,5)))
+  ratio=lambda c:(max(bg,lum(c))+.05)/(min(bg,lum(c))+.05)
+  self.assertGreaterEqual(ratio(f.INK),7);self.assertGreaterEqual(ratio(f.DIM),4.5);self.assertGreaterEqual(ratio(f.COLORS['error']),4.5)
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
