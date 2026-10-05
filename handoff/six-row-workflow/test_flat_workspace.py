@@ -22,7 +22,7 @@ class FlatTests(unittest.TestCase):
    _,hits,_=f.render(ui,1,'tasks',off);ids.update(h[-1] for h in hits if h[4]=='flat_task')
   self.assertEqual(ids,{str(i) for i in range(23)})
  def test_track_click_pages_by_one_full_window(self):
-  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)});page=f.LIST[3]
+  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)},_flat_mode='tasks');page=f.LIST[3]
   self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,page)
   self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,2*page)
   self.assertTrue(f.action(p,'flat_page',-1));self.assertEqual(p._flat_scroll,page)
@@ -33,7 +33,7 @@ class FlatTests(unittest.TestCase):
    _,hits,_=f.render(ui,1,'steps',off);ids.update(h[-1][1] for h in hits if h[4]=='detail')
   self.assertEqual(ids,set(range(40)))
  def test_scroll_clamps_and_never_rebuilds_scene(self):
-  p=ui_owner();p.state='swing';p._swing={'geo':{'flat':True,'u':1.5},'ui':self.ui()};p._art_regeo=Mock()
+  p=ui_owner();p.state='swing';p._swing={'geo':{'flat':True,'u':1.5},'ui':self.ui()};p._art_regeo=Mock();p._flat_mode='tasks'
   pet.Pet.on_wheel_scene(p,SimpleNamespace(x=300,y=100,delta=-120*100));self.assertEqual(p._flat_scroll,54);p._art_regeo.assert_not_called()
   pet.Pet.on_wheel_scene(p,SimpleNamespace(x=300,y=100,delta=120*100));self.assertEqual(p._flat_scroll,0)
   pet.Pet.on_wheel_scene(p,SimpleNamespace(x=100,y=50,delta=-120));self.assertEqual(p._flat_scroll,0)
@@ -41,6 +41,51 @@ class FlatTests(unittest.TestCase):
   _,hits,_=f.render(self.ui(),1.5,'tasks',48)
   for x,y,w,h,kind,_ in hits:
    if kind=='flat_task':self.assertGreaterEqual(y,63);self.assertLessEqual(y+h,225)
+ def mixed(self):
+  u=self.ui(6);s=u['sel_session']
+  u['sessions']=[dict(s,id=str(i),title=f'Task {i}',state=st) for i,st in enumerate(('running','waiting','error','done','done','idle'))];u['sel_session']=u['sessions'][0];return u
+ def test_live_mode_lists_only_live_sessions_capped_at_two(self):
+  _,hits,_=f.render(self.mixed(),1,'live')
+  self.assertEqual([h[-1] for h in hits if h[4]=='flat_task'],['0','1'])
+  self.assertEqual([(h[4],h[-1]) for h in hits if h[4] in ('flat_mode','flat_agent')],[('flat_agent','ZCode')])
+ def test_live_mode_hides_finished_sessions_even_when_few_are_live(self):
+  u=self.mixed();u['sessions']=[dict(s,state=st) for s,st in zip(u['sessions'],('running','done','done','idle','done','done'))];u['sel_session']=u['sessions'][0]
+  _,hits,_=f.render(u,1,'live')
+  self.assertEqual([h[-1] for h in hits if h[4]=='flat_task'],['0']);self.assertEqual([(h[4],h[-1]) for h in hits if h[4] in ('flat_mode','flat_agent')],[('flat_agent','ZCode')])
+ def test_live_mode_stays_in_compact_height_and_rest_is_transparent(self):
+  for scale in (1,1.5):
+   im,hits,_=f.render(self.mixed(),scale,'live');cut=round(f.LIVE_H*scale)
+   self.assertEqual(im.size,(round(440*scale),round(260*scale)))
+   self.assertEqual(im.crop((0,cut,im.width,im.height)).getchannel('A').getextrema(),(0,0))
+   self.assertTrue(all(h[1]+h[3]<=cut for h in hits))
+ def test_live_mode_has_no_scroll_and_switches_with_the_list(self):
+  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)},_flat_mode='live')
+  f.scroll(p,-120*50);self.assertFalse(getattr(p,'_flat_scroll',0));self.assertFalse(f.bar_input(p,SimpleNamespace(x=630,y=70),'press'))
+  self.assertTrue(f.action(p,'flat_mode','tasks'));self.assertEqual(p._flat_mode,'tasks')
+  self.assertTrue(f.action(p,'flat_mode','live'));self.assertEqual(p._flat_mode,'live')
+ def test_default_is_live_and_expanded_list_offers_collapse(self):
+  self.assertEqual(f._mode(SimpleNamespace()),'live')
+  _,hits,_=f.render(self.ui(),1,'tasks');self.assertIn(('flat_mode','live'),[(h[4],h[5]) for h in hits])
+ def test_live_mode_is_cross_agent_while_expanded_list_follows_selected_agent(self):
+  ui=self.mixed();ui['sessions'][1]['agent']='claude-code';ui['flat_agent']='ZCode'
+  _,live,_=f.render(ui,1,'live');_,tasks,_=f.render(ui,1,'tasks')
+  self.assertEqual([h[-1] for h in live if h[4]=='flat_task'],['0','1'])
+  self.assertNotIn('1',[h[-1] for h in tasks if h[4]=='flat_task'])
+ def test_task_click_from_live_view_opens_that_agents_steps(self):
+  ui=self.mixed();ui['sessions'][1]['agent']='claude-code'
+  p=SimpleNamespace(_swing={'ui':ui},_flat_agent='ZCode')
+  self.assertTrue(f.action(p,'flat_task','1'));self.assertEqual((p._flat_agent,p._flat_mode,p._book_sel),('Claude','steps',('sid','1')))
+ def test_task_click_ignores_malformed_swing_state(self):
+  for bad in (Mock(),None,{'ui':Mock()},{'ui':{'sessions':Mock()}}):
+   q=SimpleNamespace(_swing=bad);self.assertTrue(f.action(q,'flat_task','1'));self.assertEqual(q._flat_mode,'steps');self.assertFalse(hasattr(q,'_flat_agent'))
+ def test_chain_length_matches_workflow_steps(self):
+  ui=self.mixed()
+  for r in f.rows_for(ui,'live'):
+   s=next(x for x in ui['sessions'] if x['id']==r['id']);self.assertEqual(len(r['chain']),len(f.workflow(dict(ui,sel_session=s))['steps']))
+ def test_live_title_prioritises_attention(self):
+  self.assertEqual(f.live_title([{'state':'running'},{'state':'waiting'}]),'1 个在等你确认')
+  self.assertEqual(f.live_title([{'state':'running'},{'state':'running'}]),'我看着呢 · 2 个在跑')
+  self.assertEqual((f.live_title([{'state':'done'}]),f.live_title([])),('都忙完啦','暂时没有任务'))
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
@@ -68,14 +113,14 @@ class FlatTests(unittest.TestCase):
  def test_real_unknown_no_fake_rows(self):
   _,hits,_=f.render({});self.assertFalse(any(h[4] in ('flat_task','detail') for h in hits));self.assertEqual(len(f.quota_rows({})),2)
  def test_scrollbar_drag_reaches_last_row(self):
-  p=ui_owner();p._flat_panel_style=True;p._swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(9)}
+  p=ui_owner();p._flat_panel_style=True;p._swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(9)};p._flat_mode='tasks'
   self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=70),'press'))
   self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=225),'move'))
   self.assertEqual(p._flat_scroll,54)
   self.assertTrue(f.bar_input(p,SimpleNamespace(x=630,y=225),'release'))
   self.assertIsNone(p._flat_bar_drag)
  def test_native_composition(self):
-  p=owner(1.25);p.sw,p.sh=2880,1800;p._flat_panel_style=True;p._studio_style=True;p._house_on=False;p.settings={}
+  p=owner(1.25);p.sw,p.sh=2880,1800;p._flat_panel_style=True;p._studio_style=True;p._house_on=False;p.settings={};p._flat_mode='tasks'
   g=p._art_geo(1);self.assertEqual(g['size'],(660,390));p._swing={'geo':g,'theta':0,'scene_l':0,'scene_t':0,'ui':self.ui(),'art':True}
   with patch('pet.push_layered'):p._push_swing_art(Image.new('RGBA',(p.W,p.H)))
   self.assertEqual(sum(h[4]=='flat_task' for h in p._swing['ui_hits']),6)

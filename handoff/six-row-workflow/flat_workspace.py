@@ -1,7 +1,7 @@
 """Half-height workspace. Public actions above; live agent lights and AIQuota below."""
 import json, math, os, time
 from pathlib import Path
-from PIL import Image,ImageDraw
+from PIL import Image,ImageColor,ImageDraw
 from apple_ui import font
 from ai_quota import quota_view, _number, _used, _timestamp
 from moon_board import workflow,_fit
@@ -12,6 +12,8 @@ W,H=440,260
 LIST=(170,42,254,108)
 ROW=18
 AGENT_ORDER=('Codex','Claude','ZCode')
+LIVE_H=170;LIVE_ROWS=2;LIVE=('running','waiting','error');DEFAULT_MODE='live'
+NAMES={'Claude':'#cfac94','Codex':'#b9c6e5'}
 
 
 def agent_name(raw):
@@ -50,6 +52,15 @@ def session_for(ui,name=None,prefer_current=True):
     return min(rows,key=rank) if rows else None
 
 
+def _mode(owner):return getattr(owner,'_flat_mode',DEFAULT_MODE)
+
+
+def _swing_sessions(owner):
+    sw=getattr(owner,'_swing',None);ui=sw.get('ui') if isinstance(sw,dict) else None
+    rows=ui.get('sessions') if isinstance(ui,dict) else None
+    return rows if isinstance(rows,list) else []
+
+
 def geometry(owner, geo):
     from pet import ChatBox
     u=ChatBox._layout(owner.sw,owner.sh)[0]
@@ -71,14 +82,14 @@ def rows_for(ui,mode):
         f=workflow(dict(ui,sel_session=session))
         return [dict(s,id=f['session'].get('id'),state=s['status']) for s in reversed(f['steps'])]
     rows=[]
-    for s in sessions_for(ui):
+    for s in (ui.get('sessions') or [] if mode=='live' else sessions_for(ui)):
         f=workflow(dict(ui,sel_session=s));steps=f['steps']
         if not steps:continue
         state='idle' if f['stale'] else s.get('state','idle')
         step=steps[-1] if steps else {}
         rows.append(dict(id=s.get('id'),title=step.get('title') or '暂无步骤记录',state=state,
                          result=step.get('result',''), index=step.get('index'),
-                         updated=_number(s.get('updated')) or 0))
+                         updated=_number(s.get('updated')) or 0,agent=agent_name(s.get('agent')),chain=[x.get('status') for x in steps]))
     priority={'running':0,'waiting':1,'error':2,'done':3,'idle':4}
     return sorted(rows,key=lambda r:(priority.get(r['state'],4),-r['updated']))
 
@@ -147,7 +158,8 @@ def quota_rows(ui):
 
 
 def scroll(owner,delta):
-    sw=owner._swing;rows=rows_for(sw.get('ui') or {},getattr(owner,'_flat_mode','tasks'))
+    if _mode(owner)=='live':return
+    sw=owner._swing;rows=rows_for(sw.get('ui') or {},_mode(owner))
     limit=max(0,len(rows)*ROW-LIST[3])
     owner._flat_scroll=min(limit,max(0,getattr(owner,'_flat_scroll',0)-delta/120*ROW))
     owner._flat_cache=None
@@ -159,7 +171,8 @@ def bar_input(owner,e,phase):
     if phase=='release':
         active=getattr(owner,'_flat_bar_drag',None) is not None
         owner._flat_bar_drag=None;return active
-    u=g['u'];n=len(rows_for(sw.get('ui') or {},getattr(owner,'_flat_mode','tasks')))
+    if _mode(owner)=='live':return False
+    u=g['u'];n=len(rows_for(sw.get('ui') or {},_mode(owner)))
     if n*ROW<=LIST[3]:return False
     thumb=max(20,LIST[3]**2/(n*ROW));limit=n*ROW-LIST[3]
     if phase=='press':
@@ -174,7 +187,10 @@ def bar_input(owner,e,phase):
 
 def action(owner,kind,payload):
     if kind=='flat_mode':owner._flat_mode=payload;owner._flat_scroll=0
-    elif kind=='flat_task':owner._book_sel=('sid',payload);owner._flat_mode='steps';owner._flat_scroll=0
+    elif kind=='flat_task':
+        owner._book_sel=('sid',payload);owner._flat_mode='steps';owner._flat_scroll=0
+        s=next((x for x in _swing_sessions(owner) if isinstance(x,dict) and str(x.get('id'))==str(payload)),None)
+        if s:owner._flat_agent=agent_name(s.get('agent'))
     elif kind=='flat_agent':
         name=str(payload or '')
         if name not in AGENT_ORDER:return False
@@ -188,18 +204,77 @@ def action(owner,kind,payload):
     owner._flat_cache=None;return True
 
 
-def render(ui,u=1,mode='tasks',offset=0):
-    w,h=round(W*u),round(H*u);im=Image.new('RGBA',(w,h));d=ImageDraw.Draw(im);hits=[]
+def _pen(u):
+    im=Image.new('RGBA',(round(W*u),round(H*u)));d=ImageDraw.Draw(im);hits=[]
     def box(rect,color,r=0,outline=None):
         x,y,a,b=rect;d.rounded_rectangle(tuple(round(v*u) for v in (x,y,x+a,y+b)),radius=round(r*u),fill=color,outline=outline,width=1)
     def txt(x,y,s,size=13,color=INK,width=None,weight=450,anchor='la'):
         f=font(round(size*u),weight);d.text((round(x*u),round(y*u)),_fit(s,f,width*u) if width else str(s),font=f,fill=color,anchor=anchor)
     def hit(rect,kind,payload=None):hits.append(tuple(round(v*u) for v in rect)+(kind,payload))
+    return im,d,hits,box,txt,hit
+
+
+def live_title(rows):
+    n={k:sum(r['state']==k for r in rows) for k in LIVE}
+    if n['waiting']:return f"{n['waiting']} 个在等你确认"
+    if n['error']:return f"{n['error']} 个出错了"
+    if n['running']:return f"我看着呢 · {n['running']} 个在跑"
+    return '都忙完啦' if rows else '暂时没有任务'
+
+
+def render_live(ui,u=1):
+    """Compact view: live sessions of every agent, a dot chain per session, quota in the right column.
+    Draws in the top LIVE_H of the same window; the rest stays transparent so the window size is unchanged."""
+    im,d,hits,box,txt,hit=_pen(u)
+    def dot(cx,cy,r,color,glow=False):
+        k=4;g=int((r+4)*2*u*k)+2;t=Image.new('RGBA',(g,g));td=ImageDraw.Draw(t);c=g/2;e=(r+2.6)*u*k
+        if glow:td.ellipse((c-e,c-e,c+e,c+e),fill=ImageColor.getrgb(color)+(90,))
+        td.ellipse((c-r*u*k,c-r*u*k,c+r*u*k,c+r*u*k),fill=color)
+        t=t.resize((max(1,round(g/k)),max(1,round(g/k))),Image.LANCZOS);im.alpha_composite(t,(round(cx*u-t.width/2),round(cy*u-t.height/2)))
+    rows=rows_for(ui,'live');live=[r for r in rows if r['state'] in LIVE];shown=live[:LIVE_ROWS]
+    box((0,0,W-1,LIVE_H-1),BG,16,LINE)
+    txt(173,13,live_title(rows),13,width=205,weight=550)
+    txt(420,14,'聊聊',11,ACCENT,anchor='ra');hit((386,7,40,30),'house_chat')
+    for i,row in enumerate(shown):
+        y=38+i*32;col=COLORS.get(row['state'],DIM);idx=row['index'];chain=row['chain'];cut=len(chain)>6;chain=chain[-6:];x0=208 if cut else 190
+        dot(175,y+8,3.2,col)
+        txt(186,y,row['agent'],11,NAMES.get(row['agent'],'#b9c6e5'),width=40)
+        txt(228,y-1,row['title'],12,width=148)
+        txt(420,y,f"第 {idx+1 if isinstance(idx,int) else len(chain)} 步",10,DIM,anchor='ra')
+        if cut:dot(190,y+23,1.3,'#656772');dot(195,y+23,1.3,'#656772')
+        if len(chain)>1:box((x0,y+23,13*(len(chain)-1),1),'#4a4b54')
+        for j,st in enumerate(chain):last=j==len(chain)-1;dot(x0+j*13,y+23.5,4 if last else 2.6,col if last else COLORS.get(st,DIM),last)
+        hit((172,y-4,252,30),'flat_task',row['id'])
+    if not shown:txt(186,56,'现在没有在跑的任务' if rows else '暂无步骤记录',12,DIM,width=225)
+    rest=len(rows)-len(shown)
+    if rest>0:
+        y=38+len(shown)*32+2 if shown else 82;go=rows[0]['agent']
+        txt(186,y,f"另有 {rest} 个{'会话' if len(live)>len(shown) else '已结束'} · 展开",10.5,DIM,width=200)
+        d.polygon([(round(410*u),round((y+6)*u)),(round(418*u),round((y+6)*u)),(round(414*u),round((y+11)*u))],fill=DIM)
+        hit((172,y-3,252,18),*(('flat_agent',go) if go in AGENT_ORDER else ('flat_mode','tasks')))
+    box((173,121,251,1),LINE)
+    for i,row in enumerate(quota_rows(ui)[:2]):
+        y=128+i*17;txt(173,y,row['name'],11,NAMES.get(row['name'],'#b9c6e5'),width=42)
+        if not row['cycles']:txt(217,y,'暂无数据',11,DIM)
+        for j,c in enumerate(row['cycles'][:2]):
+            x=217+j*84;v=c['used'];stale=c['stale'];col=DIM if stale else '#ef8585' if v is not None and v>=90 else '#efba70' if v is not None and v>=70 else '#83caa2'
+            txt(x,y,c['label'],10,DIM);box((x+13,y+10,30,4),LINE,2)
+            if v is not None and v>0:box((x+13,y+10,max(2,30*v/100),4),col,2)
+            txt(x+78,y,('—' if v is None else f'{v:.0f}%')+('旧' if stale and v is not None else ''),11,col,anchor='ra')
+    txt(420,129,'模拟' if ui.get('mock') else '已用',10,DIM,anchor='ra')
+    hit((172,120,252,46),'swallow')
+    return im,[q for q in hits if q[2]>0 and q[3]>0],0
+
+
+def render(ui,u=1,mode='tasks',offset=0):
+    if mode=='live':return render_live(ui,u)
+    im,d,hits,box,txt,hit=_pen(u)
     box((0,0,W-1,H-1),BG,16,LINE)
     agent=selected_agent(ui)
-    txt(173,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=235)
+    txt(173,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=185)
     txt(420,14,'返回' if mode=='steps' else '聊聊',11,ACCENT,anchor='ra')
     hit((386,7,40,30),'flat_mode' if mode=='steps' else 'house_chat','tasks' if mode=='steps' else None)
+    if mode=='tasks':txt(384,14,'收起',11,ACCENT,anchor='ra');hit((350,7,34,30),'flat_mode','live')
     rows=rows_for(ui,mode);n=len(rows);offset=max(0,min(float(offset),max(0,n*ROW-LIST[3])))
     crop=Image.new('RGBA',(round(LIST[2]*u),round(LIST[3]*u)))
     for i,row in enumerate(rows):
@@ -250,7 +325,7 @@ def render(ui,u=1,mode='tasks',offset=0):
 
 def push(owner,small):
     from pet import push_layered,SWING_PERSP
-    sw=owner._swing;g=sw['geo'];u=g['u'];ui=live_ui(owner,sw.get('ui') or {});mode=getattr(owner,'_flat_mode','tasks')
+    sw=owner._swing;g=sw['geo'];u=g['u'];ui=live_ui(owner,sw.get('ui') or {});mode=_mode(owner)
     ui=dict(ui,flat_agent=getattr(owner,'_flat_agent',None) or selected_agent(ui))
     key=(repr(tuple(ui.get(n) for n in ('sessions','sel_session','quota','codex_quota','codex_quota_error','mock','quota_widget','flat_agent'))),int((ui.get('now') or time.time())/15),u,mode,getattr(owner,'_flat_scroll',0))
     cache=getattr(owner,'_flat_cache',None)
