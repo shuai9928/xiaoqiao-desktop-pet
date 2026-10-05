@@ -137,7 +137,7 @@ def bar_input(owner,e,phase):
 def action(owner,kind,payload):
     if kind=='flat_mode':owner._flat_mode=payload;owner._flat_scroll=0
     elif kind=='flat_task':owner._book_sel=('sid',payload);owner._flat_mode='steps';owner._flat_scroll=0
-    elif kind=='flat_page':scroll(owner,-payload*120*3)
+    elif kind=='flat_page':scroll(owner,-payload*120*(LIST[3]//ROW))
     elif kind=='flat_top':owner._flat_scroll=0
     else:return False
     owner._flat_cache=None;return True

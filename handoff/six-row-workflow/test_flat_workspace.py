@@ -36,6 +36,11 @@ class FlatTests(unittest.TestCase):
   _,hits,_=f.render(self.ui(),1.5,'tasks',48)
   for x,y,w,h,kind,_ in hits:
    if kind=='flat_task':self.assertGreaterEqual(y,63);self.assertLessEqual(y+h,225)
+ def test_track_click_pages_by_one_full_window(self):
+  p=SimpleNamespace(_swing={'geo':{'flat':True,'u':1.5},'ui':self.ui(23)});page=f.LIST[3]
+  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,page)
+  self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,2*page)
+  self.assertTrue(f.action(p,'flat_page',-1));self.assertEqual(p._flat_scroll,page)
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_real_unknown_no_fake_rows(self):
