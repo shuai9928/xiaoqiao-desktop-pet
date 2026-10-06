@@ -1,0 +1,48 @@
+{
+  "desktop_source_sha": "5102d759a50dd8a90cd8d9f0b6f68926fa9aca01",
+  "github_parent_sha": "1cac25c6e54a5c9a71dc9abc746711520f64621d",
+  "source_baseline_sha": "d9abf10d20f6fc831832b7b8323ab5cd990c938b",
+  "source_files": [
+    "CONTENTS.md",
+    "DESIGN_CONSTITUTION.md",
+    "DESIGN_ISSUES.md",
+    "DESIGN_ITERATIONS.md",
+    "DESIGN_MEMORY.md",
+    "EXPERIMENTS.md",
+    "_plan_cpu_probe.ps1",
+    "_plan_fx2_gold_share.py",
+    "_plan_star_count.py",
+    "_plan_star_count_ss.py",
+    "ai_lights_core.py",
+    "flat_workspace.py",
+    "fx.py",
+    "native_session_sync.py",
+    "pet.py",
+    "popup_material.py",
+    "task_directions.py",
+    "test_ai_lights_data.py",
+    "test_flat_workspace.py",
+    "test_hat_fx.py",
+    "test_native_session_sync.py",
+    "test_pet.py",
+    "test_popup_material.py",
+    "test_rest_eyes.py",
+    "test_seated_wake.py",
+    "test_task_directions.py",
+    "test_workflow_stages.py",
+    "workflow_stages.py"
+  ],
+  "publication_only_sanitization": [
+    "DESIGN_ISSUES.md",
+    "DESIGN_ITERATIONS.md",
+    "EXPERIMENTS.md",
+    "pet.py",
+    "test_ai_lights_data.py",
+    "tools/check_public_files.py"
+  ],
+  "private_runtime_files_excluded": true,
+  "fixture_adaptations": [
+    "AWS-shape test value constructed at runtime",
+    "Stripe-shape alphabetical fake value replaced by same-length runtime placeholder"
+  ]
+}

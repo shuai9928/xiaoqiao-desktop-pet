@@ -498,39 +498,45 @@ class HatFX2(hat_fx.HatFX):
         # B3 符文微光:_sigil_sprite 预合成 6 枚 × 4 档(0.14~0.20,极淡)
         sigils = [[_alpha_scaled(_sigil_sprite(4.6 * ps, 1700 + i), 0.14 + 0.02 * j)
                    for j in range(4)] for i in range(6)]
-        # B2:星烟双层合成 —— 底部暖白亮核 + 烟 PNG 紫晕 + 顶一颗金星点,
-        # 4 档"成长"(核先亮 → 晕展开)。晕烘焙系数 0.62×0.78 = 晕峰 0.48。
+        # B2:星烟双层合成 —— 底部暖白亮核 + 烟 PNG 紫晕,4 档"成长"
+        # (核先亮 → 晕展开)。晕烘焙系数 0.70×0.78 = 晕峰 0.55(I-36 收尾把
+        # 0.62 提到 0.70,静帧烟柱基部连成柱不散珠;顶星不再烘进烟贴图,
+        # 拆出独立烘焙,见循环后 smoke_star)。
         halo = baked(src["smoke-lilac"], 36)
         w, h = halo.size
         smoke_sprites = []
         for stage in range(4):
             g = stage / 3
-            im = _alpha_scaled(halo, 0.62 * (0.55 + 0.45 * g))
+            im = _alpha_scaled(halo, 0.70 * (0.55 + 0.45 * g))
             core = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             crx, cry = 0.11 * w, 0.09 * h
             ImageDraw.Draw(core).ellipse(
                 [w / 2 - crx, h * 0.70 - cry, w / 2 + crx, h * 0.70 + cry],
                 fill=(255, 246, 214, int(230 * (1 - 0.25 * g))))
             im.alpha_composite(_soft(core, 0.06 * h))
-            # 顶一颗金星点(FIX-1 配套):实心四角星体,复合进深底后仍落在
-            # 严格金带;旧 _flash_sprite 细线版经降采样读不出金(H≈34°)
-            sr = max(3.0, 0.13 * h)
-            spts = []
-            for kk in range(8):
-                rr = sr if kk % 2 == 0 else sr * 0.40
-                aa = -math.pi / 2 + math.pi * kk / 4
-                spts.append((sr + math.cos(aa) * rr, sr + math.sin(aa) * rr))
-            star = Image.new("RGBA", (int(sr * 2) + 2, int(sr * 2) + 2), (0, 0, 0, 0))
-            sd = ImageDraw.Draw(star)
-            sd.polygon(spts, fill=(255, 215, 40, 255))
-            # 不加白芯点:白芯经紫晕/降采样混成 mauve 灰点(验收官残影判据),
-            # 纯金星体 + 收紧的软边读数最干净
-            star = _soft(star, 0.3)
-            im.alpha_composite(star, (int(w / 2 - star.width / 2),
-                                      int(h * 0.22 - star.height / 2)))
             smoke_sprites.append([None] + [faded(im, a) for a in hat_fx.ALPHAS[1:]])
+        # 顶星唯一化(I-36):星不再复合进每张烟贴图——14 槽 1/7s 发射下,
+        # 相邻槽纵向仅错开 ~5px(2x),每粒各带一颗星必然贴邻粘连成双星/
+        # 珠链。改为全场只烘这一张,绘制期只贴在「最老存活槽」(烟柱最高
+        # 处)上,alpha 随该槽 level 同步淡出。同一严格金配方:实心四角星
+        # (255,215,40,255)+软边;半径实测标定 0.13h→0.21h 补偿金份额
+        # (星从「每粒 1 颗×约 9 粒」变全场 1 颗;0.16h 实测 a2_smoke_only
+        # 严格金 23.0% 仍脱带,0.21h 实测回带,见 outputs/fx2/_diag_fix/)。
+        sr = max(3.0, 0.21 * h)
+        spts = []
+        for kk in range(8):
+            rr = sr if kk % 2 == 0 else sr * 0.40
+            aa = -math.pi / 2 + math.pi * kk / 4
+            spts.append((sr + math.cos(aa) * rr, sr + math.sin(aa) * rr))
+        star = Image.new("RGBA", (int(sr * 2) + 2, int(sr * 2) + 2), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(star)
+        sd.polygon(spts, fill=(255, 215, 40, 255))
+        # 不加白芯点:白芯经紫晕/降采样混成 mauve 灰点(验收官残影判据),
+        # 纯金星体 + 收紧的软边读数最干净
+        star = _soft(star, 0.3)
+        smoke_star = [None] + [faded(star, a) for a in hat_fx.ALPHAS[1:]]
         return dict(trail_dust=trail_dust, flies=flies, sigils=sigils,
-                    smoke_sprites=smoke_sprites,
+                    smoke_sprites=smoke_sprites, smoke_star=smoke_star,
                     burst_start=cls._burst_steps(ps, GOLD_L, MAGIC_B, 1.0),
                     burst_done=cls._burst_steps(ps, GOLD, GOLD_L, 1.25))
 
@@ -599,6 +605,7 @@ class HatFX2(hat_fx.HatFX):
                 instance.flies = tables["flies"]
                 instance.sigils = tables["sigils"]
                 instance.smoke_sprites = tables["smoke_sprites"]
+                instance.smoke_star = tables["smoke_star"]
                 instance.burst_start = tables["burst_start"]
                 instance.burst_done = tables["burst_done"]
                 cls._reset_state(instance)
@@ -723,7 +730,9 @@ class HatFX2(hat_fx.HatFX):
         ordinal=self.smoke_head
         slot[0]=now;slot[1]=tip_x;slot[2]=tip_y
         slot[3]=math.sin(ordinal*2.4)*1.5*self.scale
-        slot[4]=ordinal                       # 螺旋相位 = 槽序号 ×0.55 rad
+        slot[4]=ordinal                       # 螺旋相位 = 槽序号 ×0.3 rad
+                                              # (I-36:0.55→0.3,相邻槽横向
+                                              # 错位收小,防静帧珠链)
         self.smoke_head=(ordinal+1)%self.SMOKE_SLOTS
         self.next_smoke=now+(1/7 if self.fast else 1/4)   # B2 发射 7/s / 4/s
 
@@ -802,6 +811,7 @@ class HatFX2(hat_fx.HatFX):
         for sp,x,y in ops:
             self._paste(frame,sp,x,y)
         smoke_life=self.SMOKE_LIFE
+        top=None   # I-36:最老存活槽(烟柱最高处),全场唯一的顶星贴在这里
         for slot in self.smoke:
             age=now-slot[0]
             if not 0<=age<smoke_life:
@@ -816,8 +826,18 @@ class HatFX2(hat_fx.HatFX):
                 continue
             # 整个精灵(含烘焙晕)起于帽尖上方;上升 22×scale px/s,全程≈45px(2x)
             y=slot[2]-3*ps-sprite.height/2-age*22*ps
-            x=slot[1]+slot[3]+math.sin(age*math.tau*1.6+slot[4]*.55)*3.0*ps
+            # 横摆幅度乘爬坡因子 min(1,age/0.4)(I-36:刚出生先贴住烟柱,
+            # 螺旋相位乘数 0.55→0.3,静帧不再散成珠链)
+            x=slot[1]+slot[3]+math.sin(age*math.tau*1.6+slot[4]*.3)*3.0*ps*min(1.,age/0.4)
             self._paste(frame,sprite,x,y)
+            if top is None or age>top[0]:
+                top=(age,x,y,ai,sprite.height)
+        if top is not None:
+            # 顶星只贴最老存活槽:星心在烟贴图内原位于 (w/2, 0.22h),
+            # 即贴图中心上方 0.28h;alpha 档与该槽 level 一致,同步淡出
+            star=self.smoke_star[top[3]]
+            if star is not None:
+                self._paste(frame,star,top[1],top[2]-0.28*top[4])
         fit=self.orbit_fit
         if fit is not None:
             # B3 符文微光:沿帽檐椭圆 6 个固定刻度,0.05 rad/s 慢转(与星轨反向),

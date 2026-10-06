@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = re.compile(r'^(ai_config|memories|chat_history|pet_settings|pet_reminders|pet_state|pet_cmd)(?:[._-].*)?\.json$',re.I)
 PATTERNS = {
+    'stripe-key-shape': re.compile(r'sk_(?:live|test)_[A-Za-z0-9]{20,}'),
     'google-key': re.compile(r'AIza[0-9A-Za-z_-]{30,}'),
     'github-token': re.compile(r'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,}'),
     'api-token': re.compile(r'sk-[A-Za-z0-9_-]{30,}'),

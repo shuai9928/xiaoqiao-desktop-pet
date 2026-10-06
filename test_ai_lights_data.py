@@ -57,12 +57,32 @@ class LabelTests(unittest.TestCase):
             self.assertNotIn(secret, L("Bash", {"command": cmd}), cmd)
         self.assertEqual(L("Grep", {"pattern": "AKIA" + "X" * 16}), "搜索")
         self.assertEqual(L("Grep", {"pattern": "petLine"}), "搜索 petLine")
-        self.assertEqual(L("Task", {"description": "审查用户的私密邮件"}), "子代理")
+        delegated = L("Task", {"description": "审查用户的私密邮件"})
+        self.assertEqual(delegated, "委派子智能体 · 审核与检查")
+        self.assertNotIn("私密", delegated)
+        self.assertNotIn("邮件", delegated)
         self.assertEqual(L("Bash", {"command": 'echo "=> done"'}), "命令 echo")       # 引号里的 > 不是写文件
 
     def test_garbage(self):
         self.assertEqual(core.action_label(None, None), "")
         self.assertEqual(core.command_label(""), "命令")
+
+    def test_shared_hook_delegation_uses_finite_directions(self):
+        label = core.action_label('collaboration.spawn_agent', {
+            'task_name': 'ui_layout_review', 'message': 'PRIVATE_PROMPT'})
+        self.assertEqual(label, '委派子智能体 · 界面与布局')
+        self.assertEqual(core.action_label('Task', {'subagent_type': 'Explore',
+            'description': '检查颜色与对比度', 'prompt': 'PRIVATE_PROMPT'}),
+            '委派子智能体 · 颜色与对比度')
+        self.assertEqual(core.action_label('collaboration.followup_task', {
+            'target': 'PRIVATE_ID', 'message': '测试回归 PRIVATE_MESSAGE'}),
+            '跟进子智能体 · 测试与验证')
+        self.assertEqual(core.action_label('send_message', {
+            'target': 'PRIVATE_ID', 'message': '审核代码 PRIVATE_MESSAGE'}),
+            '跟进子智能体 · 审核与检查')
+        self.assertEqual(core.action_label('Task', {'prompt': 'PRIVATE_PROMPT'}),
+            '委派子智能体')
+        self.assertEqual(core.action_label('wait', {'message': '测试 PRIVATE_MESSAGE'}), '等结果')
 
 
 class ZcodeTests(unittest.TestCase):
@@ -155,8 +175,28 @@ class ZcodeTests(unittest.TestCase):
             with open(os.path.join(self.d, name), encoding="utf-8", errors="replace") as f:
                 self.assertNotIn("abc123", f.read())
 
+    def test_delegation_hook_records_responsibility_without_prompt(self):
+        hook = json.dumps({'session_id': 's-delegate', 'hook_event_name': 'PreToolUse',
+            'tool_name': 'Task', 'tool_input': {'description': '检查比例与尺寸',
+                'subagent_type': 'Explore', 'prompt': 'PRIVATE_PROMPT TOKEN=PRIVATE_TOKEN'}})
+        with patch.object(zcode_notify, 'SESSIONS_DIR', self.d), patch.object(zcode_notify, 'HERE', self.d), \
+                patch('sys.argv', ['zcode_notify.py', 'tool']), patch('sys.stdin') as stdin:
+            stdin.isatty.return_value = False
+            stdin.read.return_value = hook
+            zcode_notify.main()
+        data = self.read('s-delegate')
+        self.assertEqual(data['actions'][0]['a'], '委派子智能体 · 比例与尺寸')
+        self.assertNotIn('PRIVATE_', json.dumps(data))
+
 
 class WslHookTests(unittest.TestCase):
+    def test_shared_delegation_label_flows_through_wsl(self):
+        label = core.action_label('spawn_agent', {'task_name': 'hat_fx_render',
+            'message': 'PRIVATE_PROMPT'})
+        data = wsl_lights_hook.on_action({}, 's', 'project', label)
+        self.assertEqual(data['actions'][0], '委派子智能体 · 动态特效')
+        self.assertNotIn('PRIVATE_', json.dumps(data))
+
     def test_full_session_id_kept(self):
         a = core.session_id_from({"transcript_path": "/h/.codex/sessions/rollout-2026-10-01T09-00-00-01a0f4f7-ae4c-7b10-b576-aa7100437385.jsonl"})
         b = core.session_id_from({"transcript_path": "/h/.codex/sessions/rollout-2026-10-01T09-00-00-01a0f4f8-ae4c-7b10-b576-aa7100437385.jsonl"})
@@ -263,12 +303,13 @@ class MacSyncTests(unittest.TestCase):
         self.assertEqual(self.names(), ["mac-claude-a.json"])
 
     def test_snapshot_text_is_cleaned(self):
+        stripe_fixture = "sk_live_" + "X" * 24
         mac_session_sync.apply_snapshot(snapshot({"agent": "claude", "id": "u", "state": "running", "updated": NOW,
-                                                  "actions": ["命令 psql postgres://a:b@db/x", "读 sk_live_" + "X" * 24]}),
+                                                  "actions": ["命令 psql postgres://a:b@db/x", "读 " + stripe_fixture]}),
                                         now=NOW, sessions_dir=self.d)
         text = json.dumps(core.load_json(os.path.join(self.d, "mac-claude-u.json")), ensure_ascii=False)
         self.assertNotIn("postgres://", text)
-        self.assertNotIn("X" * 24, text)
+        self.assertNotIn(stripe_fixture, text)
 
     def test_bad_or_partial_output_is_not_a_snapshot(self):
         for text in ("", "{截断", "[]", json.dumps({"schemaVersion": 2, "sessions": []}),

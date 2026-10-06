@@ -92,6 +92,72 @@ class HatFXTests(unittest.TestCase):
             self.advance(1.);self.h.draw(im)
         self.assertIsNotNone(im.getbbox())
 
+    # ---- I-36 顶星唯一化:烟贴图本体无金星,全场只贴一颗(最老存活槽) ----
+    @staticmethod
+    def _strict_gold(p):
+        return p[0]>=200 and 140<=p[1]<=235 and p[2]<=130 and p[0]-p[2]>=90
+
+    def _gold_blobs(self,im,min_px=6):
+        px=im.load()
+        pts={(x,y) for y in range(im.height) for x in range(im.width)
+             if self._strict_gold(px[x,y][:3])}
+        seen,out=set(),[]
+        for p0 in pts:
+            if p0 in seen:continue
+            stack,comp=[p0],[]
+            seen.add(p0)
+            while stack:
+                x,y=stack.pop();comp.append((x,y))
+                for dx in(-1,0,1):
+                    for dy in(-1,0,1):
+                        q=(x+dx,y+dy)
+                        if q in pts and q not in seen:seen.add(q);stack.append(q)
+            if len(comp)>=min_px:out.append(comp)
+        return out
+
+    def _b2_hat(self):
+        h=hat_fx.bake(pet.ASSETS,1.6)
+        self.assertTrue(fx.HatFX2.upgrade(h,str(pet.ASSETS)))
+        return h
+
+    def test_b2_smoke_body_has_no_gold_star_baked(self):
+        tables=fx.HatFX2._bake_b(pet.ASSETS,1.6)
+        self.assertTrue(tables)
+        for tiers in tables['smoke_sprites']:
+            for sp in tiers:
+                if sp is None:continue
+                px=sp.convert('RGB').load()
+                self.assertFalse(any(self._strict_gold(px[x,y])
+                    for y in range(sp.height) for x in range(sp.width)))
+        star=[sp for sp in tables['smoke_star'] if sp is not None]
+        self.assertTrue(star)
+        for sp in star:
+            px=sp.convert('RGB').load()
+            self.assertTrue(any(self._strict_gold(px[x,y])
+                for y in range(sp.height) for x in range(sp.width)))
+
+    def test_b2_thinking_draws_exactly_one_top_star(self):
+        h=self._b2_hat()
+        t=0.
+        for i in range(10):
+            t+=.075
+            h.update(t,(),180,120,fast=True,moving=False)
+            h.set_thinking(t,True,180,120)
+        star_ids={id(sp) for sp in h.smoke_star if sp is not None}
+        for tick in (.75,1.2):                # 稳态里任意时刻恒 1 星
+            h.update(tick,(),180,120,fast=True,moving=False)
+            h.set_thinking(tick,True,180,120)
+            pastes=[]
+            orig=hat_fx.HatFX._paste          # staticmethod -> 纯函数
+            def spy(inst,frame,sprite,x,y,_orig=orig,_pastes=pastes):
+                _pastes.append(sprite)        # 类属性补丁:实例绑定为首参
+                return _orig(frame,sprite,x,y)
+            with patch.object(fx.HatFX2,'_paste',spy):
+                im=Image.new('RGBA',(360,240));h.draw(im)
+            self.assertIsNotNone(im.getbbox())
+            self.assertGreaterEqual(sum(s is not None for s in pastes),2)
+            self.assertEqual([s for s in pastes if id(s) in star_ids].__len__(),1)
+
     def test_trails_remain_outside_original_ring(self):
         self.advance(0,False)
         for index,phase in enumerate((0,2,4)):

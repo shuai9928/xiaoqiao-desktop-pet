@@ -26,8 +26,8 @@ class FlatTests(unittest.TestCase):
   self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,page)
   self.assertTrue(f.action(p,'flat_page',1));self.assertEqual(p._flat_scroll,2*page)
   self.assertTrue(f.action(p,'flat_page',-1));self.assertEqual(p._flat_scroll,page)
- def test_steps_include_all_acquired_turns(self):
-  ui=self.ui();ui['sel_session']['actions']=[{'a':f'Step{i}','r':'OK','t':ui['now']-i} for i in range(40)]
+ def test_all_observed_stage_transitions_are_reachable(self):
+  ui=self.ui();ui['sel_session']['actions']=[{'a':('调研替代方案' if i%2 else '改 file.py'),'r':'OK','t':ui['now']-i} for i in range(40)]
   ids=set()
   for off in range(0,40*18,96):
    _,hits,_=f.render(ui,1,'steps',off);ids.update(h[-1][1] for h in hits if h[4]=='detail')
@@ -71,10 +71,10 @@ class FlatTests(unittest.TestCase):
  def test_task_click_ignores_malformed_swing_state(self):
   for bad in (Mock(),None,{'ui':Mock()},{'ui':{'sessions':Mock()}}):
    q=SimpleNamespace(_swing=bad);self.assertTrue(f.action(q,'flat_task','1'));self.assertEqual(q._flat_mode,'steps');self.assertFalse(hasattr(q,'_flat_agent'))
- def test_chain_length_matches_workflow_steps(self):
+ def test_chain_length_matches_observed_stages(self):
   ui=self.mixed()
   for r in f.rows_for(ui,'live'):
-   s=next(x for x in ui['sessions'] if x['id']==r['id']);self.assertEqual(len(r['chain']),len(f.workflow(dict(ui,sel_session=s))['steps']))
+   s=next(x for x in ui['sessions'] if x['id']==r['id']);self.assertEqual(len(r['chain']),len(f.stages(dict(ui,sel_session=s))['steps']))
  def test_status_shapes_differ_not_only_in_colour(self):
   from PIL import ImageChops
   masks={}
@@ -168,7 +168,7 @@ class FlatTests(unittest.TestCase):
  def test_live_shows_one_row_per_agent_in_a_fixed_order(self):
   rows=f.agent_rows(self.trio())
   self.assertEqual([(r['agent'],r['id'],r['state']) for r in rows],[('Codex','x1','done'),('Claude','c1','running'),('ZCode','z1','waiting')])   # Claude's live session beats its older finished one
-  self.assertEqual([r['title'] for r in rows],['整理文档','跑测试','写入补丁']);self.assertEqual(len(rows[1]['chain']),3)
+  self.assertEqual([r['title'] for r in rows],['整理与交付','测试与验证','编写与修改']);self.assertEqual(len(rows[1]['chain']),3)
   _,hits,_=f.render(self.trio(),1,'live');tasks=sorted(h for h in hits if h[4]=='flat_task')
   self.assertEqual([h[-1] for h in tasks],['x1','c1','z1']);self.assertTrue(all(a[1]+a[3]<=c[1] for a,c in zip(tasks,tasks[1:])))   # three rows, top to bottom, no overlap
   self.assertEqual([h[-1] for h in sorted(hits) if h[4]=='flat_agent'],['Codex','Claude','ZCode'])                                   # each name opens that agent's list
@@ -180,34 +180,36 @@ class FlatTests(unittest.TestCase):
  def test_a_session_without_steps_does_not_hide_the_agents_other_session(self):
   u=self.trio();u['sessions']=u['sessions']+[dict(u['sessions'][2],id='c2',actions=[],updated=u['now'])]
   self.assertEqual([r['id'] for r in f.agent_rows(u) if r['agent']=='Claude'],['c1'])
- def test_step_flow_points_at_the_next_step_and_shows_an_ellipsis_until_it_exists(self):
-  self.assertEqual(f.step_flow({'title':'Read x','state':'running'}),('Read x','…'));self.assertEqual(f.step_flow({'title':'Read x','state':'waiting','next':'Edit y'}),('Read x','Edit y'))
-  self.assertEqual(f.step_flow({'title':'Read x','state':'done'}),('Read x',None))      # a finished agent has no next step, so no arrow
- def test_there_is_no_header_title_any_more_and_the_step_count_follows_the_dots(self):
-  ui=self.trio();r=f.agent_rows(ui)[0];n=min(len(r['chain']),6);lx=238+f.RX+(18 if len(r['chain'])>6 else 0)+13*(n-1)+14
-  im,_,_=f.render(ui,1,'live')
-  def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
-  self.assertTrue(bright(lx,lx+30,f.LROW0,f.LROW0+14))                                   # '第 N 步' right after the dots
-  self.assertFalse(bright(173+f.RX,176+f.RX+8,2,8))                                       # nothing is drawn where the title used to be
- def test_a_finished_row_has_no_arrow_and_a_live_row_has_one(self):
-  def after_the_text(row_state):                                                      # only the arrow and the '…' can be here: the 3-char step title ends near x=232
-   u=self.trio();u['sessions']=[dict(x,state=row_state) if x['id']=='c1' else x for x in u['sessions']];im,_,_=f.render(u,2,'live')
-   y=f.PY+f.LROW0+f.LPITCH+17
-   return sum(1 for q in im.crop((236*2,round(y*2),330*2,round((y+14)*2))).getdata() if q[3]>200 and sum(q[:3])>300)
-  self.assertGreater(after_the_text('running'),10);self.assertEqual(after_the_text('done'),0)
+ def test_step_flow_only_shows_explicit_coarse_next_phase(self):
+  self.assertEqual(f.step_flow({'title':'阅读资料与调研','state':'running'}),('阅读资料与调研',None))
+  self.assertEqual(f.step_flow({'title':'阅读资料与调研','state':'waiting','next':'Edit private.py'}),('阅读资料与调研','编写与修改'))
+  self.assertEqual(f.step_flow({'title':'阅读资料与调研','state':'done','next':'Edit y'}),('阅读资料与调研',None))
+ def test_status_follows_stage_dots_without_a_tool_counter(self):
+  im,_,_=f.render(self.trio(),1,'live')
+  # The state is right-aligned in a reserved area, not appended to tool indexes.
+  band=im.crop((338,f.PY+f.LROW0,382,f.PY+f.LROW0+14))
+  self.assertTrue(any(q[3]>200 and q[0]>150 and q[1]>150 for q in band.getdata()))
+ def test_only_explicit_next_phase_draws_an_arrow(self):
+  u=self.trio();plain,_,_=f.render(u,2,'live')
+  u['sessions'][2]['next']='编写与修改';planned,_,_=f.render(u,2,'live')
+  from PIL import ImageChops
+  self.assertIsNotNone(ImageChops.difference(plain,planned).convert('RGB').getbbox())
+  u['sessions'][2]['state']='done';finished,_,_=f.render(u,2,'live')
+  u['sessions'][2].pop('next');no_plan,_,_=f.render(u,2,'live')
+  self.assertEqual(finished.tobytes(),no_plan.tobytes())
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):
   ui=snapshot();z=ui['sel_session']
   codex=copy.deepcopy(z);codex.update(id='codex-1',agent='wslcodex',title='Codex任务',updated=ui['now']+2)
-  codex['actions']=[{'t':ui['now'],'a':'Codex步骤','r':'运行中'}]
+  codex['actions']=[{'t':ui['now'],'a':'跑测试 unittest','r':'运行中'}]
   claude=copy.deepcopy(z);claude.update(id='claude-1',agent='mac-claude',title='Claude任务',updated=ui['now']+1)
-  claude['actions']=[{'t':ui['now'],'a':'Claude步骤','r':'等待中'}]
+  claude['actions']=[{'t':ui['now'],'a':'读 settings.json','r':'等待中'}]
   ui['sessions']=[z,codex,claude];ui['flat_agent']='Codex'
-  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['Codex步骤'])
-  self.assertEqual([r['title'] for r in f.rows_for(ui,'steps')],['Codex步骤'])
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['测试与验证'])
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'steps')],['测试与验证'])
   ui['flat_agent']='Claude'
-  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['Claude步骤'])
+  self.assertEqual([r['title'] for r in f.rows_for(ui,'tasks')],['阅读资料与调研'])
  def test_agent_strip_always_offers_codex_and_claude(self):
   ui=snapshot();ui['flat_agent']='Codex'
   self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','running')])
@@ -248,9 +250,9 @@ class QuotaAndLightsTests(unittest.TestCase):
   ui=snapshot();self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','running')]);ui['now']+=9000
   self.assertEqual(f.agent_lights(ui),[('Codex','idle'),('Claude','idle'),('ZCode','idle')])
  def test_current_actions_not_project_names(self):
-  ui=snapshot();rows=f.rows_for(ui,'tasks');self.assertEqual(rows[0]['title'],'生成预览');self.assertNotIn('completed',rows[0])
+  ui=snapshot();rows=f.rows_for(ui,'tasks');self.assertEqual(rows[0]['title'],'编写与修改');self.assertNotIn('completed',rows[0])
  def test_recent_step_first_with_absolute_detail_indexes(self):
-  rows=f.rows_for(snapshot(),'steps');self.assertEqual(rows[0]['title'],'生成预览');self.assertEqual(rows[0]['index'],2)
+  rows=f.rows_for(snapshot(),'steps');self.assertEqual(rows[0]['title'],'编写与修改');self.assertEqual(rows[0]['index'],2)
  def test_native_quota_used_stale_reset_and_extra_account(self):
   now=1791196800
   raw={'schemaVersion':1,'providers':[{'name':'Codex WSL','updated':now,'staleAfter':300,'windows':[{'short':'月','used':96,'resetUnix':now+60}]}]}

@@ -1335,3 +1335,133 @@ ACCEPT。回归 test_pet 177/177 + 五套 + test_core_profile 全绿。P3 遗留
    以及已知的 test_recovery mint 计数失败（本批不涉及）。
 8. **结论：INCONCLUSIVE**（代码与逻辑测试已就绪；缺 Windows 真实桌面 1.0/0.76 验收、规定五套件、
    帧耗时与主实例重启）。请在 Windows 上跑规定回归并肉眼复核后再改 ACCEPT。
+
+
+## I-31 Windows 搬回桌面 — 2026-10-06 CST
+1. 观察：用户要求把 Claude 云端改动搬到桌面；本机 d9abf10，云端新增提交 1cac25c6e54a5c9a71dc9abc746711520f64621d。
+2. 假设：仅合入 05e8a90→1cac25c 的生产模块/测试/治理文档增量，能保留 ZCode B1～B5。
+3. 实验：独立 Git 副本应用补丁，运行 Windows 原生回归；发现 Pet 初始化强制 tasks，补为读取 flat_workspace.DEFAULT_MODE。
+4. 实现：合入 flat_workspace/test_flat_workspace 及三份云端记录；pet.py 只调整启动视图。fx.py/hat_fx.py/素材/数据采集均未修改。
+5. 证据：本会话 outputs/claude-desktop-update/before.png、after.png 和对应 JSON 为主实例 state capture 导出的实际合成帧，不是桌面全屏截图；新 PID 31328，workspace.view=live，cloud_commit=9ed04b7。
+6. 审查：当前 1.0 档 660×441 画面已复核，人物、帽尖、Agent 行与额度清楚；真实数据仅有 ZCode 步骤时仅画一行。hat_fx=36/64，含 flies=3、sigils=6，demo=false，启动 stderr 为空。
+7. 回归：test_pet 177/177；test_flat_workspace/test_agent_companion/test_agent_reactions/test_life/test_swing/test_session_lights/test_ai_lights_data/test_hat_fx/test_action_fx/test_core_profile 共284项 OK（2既有跳过）。未宣称全量通过；已知 test_recovery mint 计数问题未纳入本次。Windows 控制工具无法枚举透明窗口，备份配置后精确结束旧PID16792并启动新实例；未操作其他Python进程。
+8. 结论：桌面部署与当前1.0档执行者自审 ACCEPT；I-31完整两档设计验收仍 INCONCLUSIVE（此次未复测0.76，不将部署成功冒充完整视觉验收）。帧耗快照14.14ms仅为运行观测，不是性能A/B结论。
+
+## I-32 原生 Agent 数据补接与指定云端版本复核 — 2026-10-06 14:00 CST
+1. 观察：用户指出只有 ZCode，并再次指定 codex/zcode-desktop-pet-20261006 的 1cac25c 搬到桌面。原生 hooks 只有共用记忆，没有桌宠采集。
+2. 假设：保留云端渲染模块，仅补采集本地公共工具事件，能显示真实 Codex/Claude 行而不造任务。
+3. 实验：用隔离 JSONL 验证开始/结束/中断、工具返回、坏行/半行、隐私白名单、过期与 Claude 显式 idle。云端没有本地 transcript 时不生成会话。
+4. 实现：新增 native_session_sync.py，生产 main 启动 daemon；两秒增量读取、十秒发现文件；独立 native-codex/native-claude 文件写 ai_sessions，保留 ZCode/WSL/Mac 钩子。首轮放在构造函数会让 test_pet 创建读者，已移到生产 main，最终回归使用修正后的入口。
+5. 证据：outputs/claude-desktop-update/integrated-native.png/json 为主实例24764的实际原尺寸合成帧。flat_workspace.py 归一化换行后与1cac25c逐字节相同，fx.py与d9abf10相同。运行 view=live、visible=true、660×441、三行 Codex/Claude/ZCode；Codex当前任务运行，Claude本地记录已结束。
+6. 审查：截图三行和额度均可读，人物及帽尖保留；hat_fx=36/64、flies=3、sigils=6、demo=false。云端实时状态和下一步计划尚无生产数据源；不以模拟内容补齐。帧耗快照15.02ms只是观测。
+7. 回归：test_pet177/177；test_native_session_sync及I-31/陪伴/规定四套/帽特效/core_profile共293项OK（2既有跳过）。仅精确重启旧主实例31328，新实例24764 stderr空；个人设置先备份，未结束其他Python进程。native文件为被忽略的个人会话快照，不入Git。
+8. 结论：ACCEPT（指定云端版本部署与Windows原生接入）；云端Claude实时采集仍缺数据源，I-31完整0.76视觉验收仍INCONCLUSIVE。
+
+## I-33 休息闭眼修正 — 2026-10-06 14:12 CST
+1. 观察：用户指出休息闭眼不自然；主实例休息帧清楚显示每眼两条弧线，像眼镜。
+2. 假设：重复眼线来自_draw_blink与sleep分支；复用单条闭眼线并匹配原画脸部倾斜可解决。
+3. 实验：以真实main.png绘制睡眠与眨眼纹理，检查RGB差异、双眼瞳孔覆盖、嘴/身体/alpha不变，以及睁眼恢复原像素。
+4. 实现：pet.py移除sleep的第二次画弧；_draw_blink改为沿两眼中心斜率的浅曲线。没有改原画、皮肤贴片、脸形、状态机、工作台、AI数据或帽上特效。
+5. 证据：本次会话outputs/rest-eyes/before.png、after.png、awake-remounted.png、small-076-demo.png、rest-current.png及对应JSON。均为主实例实际合成帧；.76尺寸通过已有5秒demo钩子控制，空会话且页脚明确模拟，自动恢复。
+6. 审查：标准/.76均单条闭眼线；脸与嘴保持原画。主实例23640，最终nap=true、state=swing、demo=false、真实Codex/ZCode灯恢复、帽特效36/64；stderr空。标准档帧耗22.05ms只作运行观测。
+7. 回归：test_pet177/177；test_rest_eyes/test_depth/test_scene_art/test_seated_wake/test_life/test_swing/test_session_lights/test_ai_lights_data/test_flat_workspace/test_hat_fx/test_native_session_sync共230项OK。首次采集助手错误地等待pet_cmd删除（生产按mtime消费并保留文件），已改正。真机wake首次采集出现fall，原因未归因；经swing重新挂载后取得睁眼与再次休息证据，不将其记作无缝唤醒链路通过。仅重启目标旧PID24764，未结束其他Python进程。
+8. 结论：ACCEPT（闭眼绘制修复）；用户原本休息，复核结束恢复休息与真实数据。唤醒离座观察另待复现，不因眼部绘制测试通过而宣称全部状态转换验收。
+
+
+## I-34 阶段概览收尾 — 2026-10-06 14:37 CST
+1. 观察：用户反对右侧每个读文件/命令都列一条；实际基线显示“读capture.py”“第48步”。
+2. 假设：从现有公开动作保守归纳有限阶段，合并连续同类操作与实现中的重读，可一眼看到当前活动。
+3. 实验：隔离快照检查多次读取折叠、测试→修复→重测顺序、未知动作、错误/等待/过期、回合边界、原始日志不变；Python解释器参数后的真实测试目标单独识别。
+4. 实现：workflow_stages.py显示适配；flat_workspace默认/展开均采用阶段，进度点最多最近4阶段，右上显示状态替代工具次数；明确下一步也归纳阶段，没有明确计划不画箭头。ai_lights_core仅修正Python测试识别，不改变原始日志存储。
+5. 证据：本次outputs/workflow-summary/before.png、after.png、real-size-0.76.png、settled-live.png及对应JSON；均主实例实际合成帧。small-076-demo.png曾出现不完整信息，不作为阶段验收证据，改用真实会话及临时存档缩放复核。real-size-1.png与final-live.png采到不完整绘制，同样不用；最终settled-live三行完整。panel-render.png是独立渲染、不是主实例截图。
+6. 审查：两档实际人物/阶段/状态/额度可读；原画与闭眼逻辑未动。最终27692，nap=true、live、1.0、demo=false、帽特效36/64，stderr空；27.93ms仅运行观测。缩放存档只临时改scale并恢复1.0；位置283,83，重启前283,84（几何中心整数舍入）。
+7. 回归：工作流/native采集/额度/规定四套/闭眼/陪伴共224项OK；test_pet177/177且真实数据隔离。帽特效/core另测首次86项OK（2跳过），但并行ZCode再次修改fx.py后新增test_b2_thinking_draws_exactly_one_top_star失败（2!=1），不宣称最终整个工作区全绿。未修改/提交另一会话fx.py、test_hat_fx.py或_plan探针。三次精确重启目标PID23640→25768→尺寸复核新实例→27692，不结束其他Python。
+8. 结论：ACCEPT（本批阶段概览，两档执行者自审）。公开记录只能给观察到的阶段，无任务完整计划时不推测百分比。并行特效测试失败与非完整截图观察保留，不冒充全工作区/所有渲染帧验收。
+
+## I-36 B2 思考星烟静帧收尾（顶星唯一化+烟柱连续化）— 2026-10-06 CST（施工批，执行者自审）
+1. 读原则/经验/问题池：宪法 3（发光不掩盖结构、只许改结构）、9（真实尺寸验收）；
+   I-30 遗留两个 P3（顶星双星叠置、烟柱静帧串珠）挂账未清；M42 不做常亮大光效。
+2. 观察真实画面：探针 _plan_star_count_ss.py 在 SS=2 背层逐帧数严格金连通域——
+   修复前（HEAD fx.py 重渲染，outputs/fx2/_diag_before/）12/12 帧烟柱顶部金块
+   n=201~304、y 跨 37px，ss_05 另有第 3 颗小星斑；4x 裁片目视 3 星珠链。另澄清：
+   整帧恒定的第二个金块（n=123, x[750-770]）是 B3 金萤火（I-30 已验收常驻元素，
+   位于烟柱区外），不计入烟柱判定。
+3. 选单一问题：B2 静帧烟柱「多星粘连+串珠」，一次清掉 I-30 两个 P3。
+4. 假设/最小实验/预期视觉/副作用：星从「每张烟贴图各烘一颗（0.13h）」拆出为
+   全场单独烘焙一张、只贴最老存活槽（烟柱最高处），alpha 随该槽 level 淡出——
+   预期任意时刻恒 1 星；串珠三参数（横摆乘爬坡因子 min(1,age/0.4)、螺旋相位
+   0.55→0.3 rad、晕系数 0.62→0.70）让基部连成柱。副作用风险：全场 1 颗星使
+   严格金份额下降——半径需实测标定；晕峰 0.48→0.55 超原 E5 上限（本条目授权
+   的参数修订，宪法 3 不违：不新增发光层、不用运行时滤镜）。
+5. 可恢复基线：改动全为 fx.py _bake_b/draw 参数与结构级，git 工作区可整文件回退；
+   修前证据以 HEAD fx.py 重渲染存档（_diag_before/），fx2_harness 双口径可复测。
+6. 实施：fx.py ① _bake_b 拆星独立烘焙（同配方 (255,215,40,255)+软边）+smoke_star
+   表随 upgrade 挂载；② 烟绘制循环记录最老存活槽，星贴于 (x, y−0.28h)（原星心
+   在贴图内 (w/2,0.22h) 的等价位置）；③ 三参数落地。半径迭代：0.16h 实测
+   a2_smoke_only 严格金 23.0% 脱带 → 0.21h 回带。
+7. 固定条件前后采集：_diag_fix/ 探针 12/12 帧烟柱区恰 1 金块（n=190）、烟柱区
+   ≥2 块帧数 0；4x 裁片无叠星/珠链、基部连续。measure（outputs/fx2/_fix_measure/
+   baseline.json）：严格金份额 36.37~45.00% 入带（a1 两档与改前逐位一致 42.43/
+   38.91）、配对帧耗增量 −0.04~+1.13ms ≤+2ms、覆盖率 max 2.86%（红线 10/13）、
+   人物不透明像素差=0（_plan_fx2_gold_share.py diff，5 状态×12 帧）。
+   回归：test_hat_fx 23/23（新增 2 项锁定：烟贴图无金星、单星贴图次数=1；
+   中途曾按 6px 连通域断言出现 2!=1——为单星软边在紫晕上的抗锯齿碎斑，属判据
+   口径问题，改为按「星精灵贴图次数=1」结构断言后稳定绿）、test_pet 186/186、
+   test_core_profile 17/17。
+8. 结论：ACCEPT（执行者自审 + 门禁与独立评审放行）。工作流门禁六套回归全绿、
+   独立评审放行（2026-10-06 收尾轮确认）；本批提交前复跑 test_hat_fx 23/23、
+   test_pet 186/186、test_core_profile 17/17、test_seated_wake 5/5 仍绿。
+   离线与单元证据齐；真机 live 与真实桌面 1.0/0.76 两档截图（宪法 9）挂
+   「待下次自然重启后复验」——主实例 PID 27692（14:33:33 起）运行旧代码，
+   本批未重启/未结束它。并行批（I-33/34/35）在其记录中标注的「fx 新测试失败」
+   即本批中途口径修正窗口，已在本批内修复。
+
+## I-37 秋千打盹安静档（nap_on_swing 20fps→10fps）— 2026-10-06 CST（施工批，执行者自审）
+1. 读原则/经验/问题池：性能/续航项，无质量换速度（不降 SS、不做 alpha 直通，
+   Batch 9 Round 1 已裁定质量换速度违宪）；I-5 坐姿入睡设计（睡在秋千上）。
+2. 观察真实画面：pet_state.json 1Hz 新鲜落盘 nap=true、state=swing、
+   frame_delay=50——她在秋千上打盹仍按 20fps 全管线重绘；规划轮 10s 采样
+   CPU 29.7% 单核、RSS 280.9MB。根因在代码：_frame_delay 的 10fps 档只认
+   state=="sleep"，而 go_sleep 秋千分支刻意保持 state="swing"。
+3. 选单一问题：给 nap_on_swing 加安静档，不动渲染质量路径。
+4. 假设/最小实验/预期视觉/副作用：镜像睡眠档判据插入打盹分支（有
+   bubble/sticker/circles/thinking_now 或非 zzz 粒子 →33；否则 100）；_fast_ok
+   分支与场景拖拽分支在上、优先级更高，互动当帧回原档位，不会「叫不醒」；
+   唤醒清 _nap_on_swing 后回 50。预期视觉：打盹画面 10fps 与 20fps 肉眼无差别
+   （闭眼+摆幅 0.012 渐缓+慢飘 zzz）；副作用：仅帧率，零画质参与。
+5. 可恢复基线：pet.py 单分支插入+注释改写，git 工作区可整文件回退。
+6. 实施：pet.py _frame_delay 在场景拖拽分支之后、常驻荡 50ms 之前插入打盹分支；
+   同步把 go_sleep 处「先自然落地→进 10fps 档→秋千层关掉」过时注释改写为现行
+   设计（秋千打盹→打盹分支安静档）。test_pet.py 3.86 节与 test_seated_wake.py
+   各加档位断言（既有 headless/沙箱构造法）。
+7. 固定条件前后采集：test_seated_wake 5/5（新增 test_nap_on_swing_frame_tiers：
+   无互动 100、非 zzz 粒子画得动 16/画不动 33、气泡/思考 33、拖拽/场景拖拽 16、
+   唤醒回 50）；test_pet 186/186（新增 7 条 check）；test_core_profile 17/17；
+   test_hat_fx 23/23（并行批 pet.py 眼部改动合入后复跑仍绿）。
+8. 结论：ACCEPT（执行者自审 + 门禁与独立评审放行；代码与单元层证据齐）。
+   工作流门禁六套回归全绿、独立评审放行（2026-10-06 收尾轮确认）；提交前复跑
+   test_seated_wake 5/5、test_pet 186/186、test_core_profile 17/17、
+   test_hat_fx 23/23 仍绿。CPU 收益与真机观感仍按批规挂延迟记账——主实例
+   PID 27692 14:33:33 起运行旧代码、14:51 实测 nap=true 仍 frame_delay=50，
+   本批未重启/未结束它；下次自然重启后同法采样，≤≈15% 单核且无可感卡顿后
+   池内条目（现记 FIXED）转 CLOSED。
+
+## I-35 聊天与右键弹层材质统一 — 2026-10-06 CST（执行者自审）
+1. 读原则/经验/问题池：沿用主界面材质和真实尺寸要求；用户本轮明确要求上层清楚、下层略可见；先开I-35。
+2. 观察：主底板232/255，聊天/互动卡片/原生菜单实心。现有主界面是着色alpha而非实时背景模糊。
+3. 选问题：仅统一辅助窗口与菜单透出程度，保留布局和行为。
+4. 假设/最小实验：Tk alpha和主面板共用PANEL_REST；原生菜单事件钩子处理Windows模态循环。风险是文字同步轻微变淡、菜单首次显示时尚无HWND。
+5. 基线/恢复：pet.py仅五处接线，新模块独立；可选择性回退本批提交。记录启动前状态，备份设置，不覆盖并行ZCode代码。
+6. 实施/观测：实际生产ChatBox/InteractionCard隔离窗口以棋盘底核查透出和阅读性；复制/输入/按钮正常。原生普通菜单与子菜单实测alpha=232；同线程/进程筛选避免影响桌宠人物或其他程序。精确重启27692→35232，保留秋千休息和原窗口位置，stderr空。
+7. 回归：popup_material/chat_ui/core_profile及规定life/swing/session_lights/ai_lights_data共149项通过；test_pet186/186通过并确认真实数据隔离。证据为本次Codex会话outputs/popup-material/native-menu-check.json；视觉证据为computer-use实际窗口检查，未把隔离窗口冒充主实例截图。
+8. 结论：ACCEPT（本批辅助材质）。主人物与主界面合成路径未改；这是现有界面同款半透明着色，不声称新增真实背景模糊。并行ZCode的I-36/I-37源码、测试与记录不纳入本批提交。
+
+## I-38 工作流方向与代理分工 — 2026-10-06 15:21 CST（实现与独立复审）
+1. 读原则/经验/问题池：遵守真实公开活动与真实尺寸要求；本轮用户允许在I-34粗阶段上补方向/分工，先开I-38并更新宪法粒度。
+2. 观察：原版只有调研/实现/测试等通用阶段，子代理标签不带职责，被吞作未知活动。新任务需要比工具流水账粗、比固定阶段细的粒度。
+3. 选问题：阶段加一层有限主题，委派用“委派/跟进子智能体 · 方向”表达；不增加常驻行数与字号负担。
+4. 假设/最小实验：公开工具标签、模块/任务短名称归纳有限类别；明确职责优先于Explore等类型；方向切换不增加阶段点。风险为误读任务提示中的禁改范围或把委派完成误作代理完成，故只读取短职责、仅输出有限类别。
+5. 可恢复基线：基线9fda893及before.png；修改workflow_stages/flat_workspace和公共摘要模块，不改人物源图或本轮pet.py。并行ZCode在15:16用git add -A提交ce6696d，已包含本批源码/测试/宪法与I-38初始条目；本轮收尾仅提交治理更新，不修改或重写对方历史。
+6. 实施/采集：方向在通用测试/审查阶段保留，在新回合/未知明确委派清除；展开分工行仅“记录/错误”，真实provider状态独立。三个Agent保持原两行布局；有方向时紧凑行优先显示方向、明确下一步仍保留在数据中。标准模拟主帧main-simulated-1.png、独立live/steps两档字体，真实主帧real-size-1.png与real-size-0.76.png复核；主实例.76模拟帧无文字，未作验收。
+7. 回归/复审：207项（workflow/flat/方向/native/core/life/swing/session_lights/ai_lights_data）通过，test_pet186/186确认真实数据隔离。审核找出并修正：Claude能力类型覆盖职责、未知委派误继承方向、ZCode公共hook缺职责。最终复审零必修项。精确主实例35232→28284→临时.76→29220，最终scale1、nap=true、tasks/Codex、demo=false、stderr空；未结束其他Python。真实.76有部分原状态文字不完整的单帧观察，新增方向完整，未把它宣称为全动态帧验收。
+8. 结论：ACCEPT（本批方向/分工，独立复审通过）。有限规则无法解释所有任务时仍泛化，不能冒充任务计划、所有云端会话同步、代理执行结果或准确完成百分比。

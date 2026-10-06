@@ -266,7 +266,38 @@ def _run(p, root=None):
     check("帧率: 只有 zzz 粒子仍然算静止", p._frame_delay() == 100)
     p.add_part("star", 0, 0, life=9.0)
     check("帧率: 睡着但有别的粒子回到 30fps", p._frame_delay() == 33)
-    p.parts = []; p.state = "idle"
+    # ---- 秋千打盹安静档(I-37):go_sleep 的秋千分支保持 state=="swing",
+    # 打盹不该按常驻荡 50ms 档全管线烧 CPU。镜像睡眠档判据;拖拽/场景拖拽
+    # 在上方分支先返回;唤醒清 _nap_on_swing 回常驻荡档。
+    _nap_save = getattr(p, "_nap_on_swing", False)
+    _swing_save = p._swing
+    p.state = "swing"; p._nap_on_swing = True
+    p.parts = []; p.bubble = None; p.sticker = None; p.circles = []
+    p.thinking_now = False; p.drag = None; p._scene_drag = None
+    check("帧率: 秋千打盹无互动降到 10fps", p._frame_delay() == 100)
+    p.add_part("zzz", 0, 0, life=9.0)
+    check("帧率: 秋千打盹只有 zzz 仍算静止", p._frame_delay() == 100)
+    p.add_part("star", 0, 0, life=9.0)
+    # 非 zzz 粒子:_fast_ok 分支优先给 16;画不动的机器落到打盹分支的 33
+    check("帧率: 秋千打盹有别的粒子回互动档(画得动 16)",
+          p._frame_delay() == 16)
+    p._fast_ok = False
+    check("帧率: 秋千打盹有别的粒子回 30fps(画不动)", p._frame_delay() == 33)
+    p._fast_ok = True
+    p.parts = []; p.bubble = ("嗯?", 0.0)
+    check("帧率: 秋千打盹有气泡回 30fps", p._frame_delay() == 33)
+    p.bubble = None; p.thinking_now = True
+    check("帧率: 秋千打盹思考回 30fps", p._frame_delay() == 33)
+    p.thinking_now = False; p._scene_drag = {"mx": 0, "my": 0, "moved": False}
+    check("帧率: 秋千打盹拖场景走互动档", p._frame_delay() == 16)
+    p._scene_drag = None; p.drag = (0, 0, 0, 0, False, 0.0)
+    check("帧率: 秋千打盹被拖走仍走互动档", p._frame_delay() == 16)
+    p.drag = None; p._swing = {"pend": type("P", (), {"idle_amp": 0, "damping": 0})()}
+    p.wake_up()
+    check("帧率: 唤醒清打盹标记回常驻荡 20fps",
+          not p._nap_on_swing and p.state == "swing" and p._frame_delay() == 50)
+    p._nap_on_swing = _nap_save; p._swing = _swing_save
+    p.parts = []; p.bubble = None; p.state = "idle"
     check("帧率: 常规待机 30fps", p._frame_delay() == 33)
     # 安静待机:条件全清 + 光标桩到远处 -> 20fps;氛围粒子不算"在动"
     p.last_interact = time.time() - 99

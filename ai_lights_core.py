@@ -14,6 +14,8 @@ import os
 import re
 import time
 
+from task_directions import delegation_label
+
 STATES = ("running", "waiting", "done", "error", "idle")
 
 _TEST = ("pytest", "unittest", "test.sh", "npm test", "pnpm test", "yarn test", "bun test", "go test",
@@ -80,6 +82,26 @@ def command_label(command):
     if not re.fullmatch(r"[a-z0-9._+-]{1,24}", prog):
         return "命令"                                   # 程序名本身就怪(变量、引号里的一段话):什么都不写
     lowered = " ".join([prog] + [w.lower() for w in words[1:4]])
+    # Python interpreter flags can push -m unittest past that short prefix.
+    # Recognize the executable target only: a file read/echo mentioning tests
+    # must not become a test phase, and command arguments never enter the UI.
+    if prog in ('python', 'python3', 'py'):
+        rest = words[1:]
+        while rest:
+            arg = rest.pop(0)
+            if arg in ('-X', '-W'):
+                if rest:rest.pop(0)
+                continue
+            if arg == '-m':
+                module = rest[0].lower() if rest else ''
+                if module in ('pytest', 'unittest'):
+                    return '跑测试 ' + module
+                break
+            if arg == '-c':break
+            if arg.startswith('-'):continue
+            if re.fullmatch(r'test[_-][A-Za-z0-9_.-]+\.py', base(arg)):
+                return '跑测试 Python'
+            break
     if prog in _QUIET:
         return "命令 " + prog                          # export TOKEN=… 只写命令名
     for name in _TEST:
@@ -113,6 +135,9 @@ def action_label(tool, tool_input):
     tool = str(tool or "").strip()
     if not tool:
         return ""
+    delegated = delegation_label(tool, tool_input)
+    if delegated:
+        return delegated
     inp = tool_input if isinstance(tool_input, dict) else {}
     path = inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
     if tool in ("TodoWrite", "update_plan"):
@@ -133,8 +158,6 @@ def action_label(tool, tool_input):
         return "读网页"
     if tool in ("WebSearch", "web_search"):
         return "搜网页"
-    if tool in ("Task", "Agent", "spawn_agent"):
-        return "子代理"
     if tool in ("TaskOutput", "BashOutput", "wait"):
         return "等结果"
     if tool in ("AskUserQuestion", "request_user_input"):

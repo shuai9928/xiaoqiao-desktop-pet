@@ -5,6 +5,7 @@ from PIL import Image,ImageColor,ImageDraw
 from apple_ui import font
 from ai_quota import quota_view, _number, _used, _timestamp
 from moon_board import workflow,_fit
+from workflow_stages import stages,stage_title,state_label,display_title,detail_steps
 
 BG='#1d1e2e';SURFACE='#2b2c32';LINE='#363850';INK='#f4f5fc';DIM='#b4b7cc';ACCENT='#baa3ed';RIM='#666b96'
 COLORS={'running':ACCENT,'waiting':'#efba70','error':'#f39292','done':'#83caa2','idle':DIM,'recorded':DIM}
@@ -96,15 +97,16 @@ def rows_for(ui,mode):
     if mode=='steps':
         session=session_for(ui)
         if session is None:return []
-        f=workflow(dict(ui,sel_session=session))
-        return [dict(s,id=f['session'].get('id'),state=s['status']) for s in reversed(f['steps'])]
+        f=stages(dict(ui,sel_session=session))
+        return [dict(s,id=f['session'].get('id'),state=s['status'],summary=display_title(s)) for s in reversed(detail_steps(f))]
     rows=[]
     for s in (ui.get('sessions') or [] if mode=='live' else sessions_for(ui)):
-        f=workflow(dict(ui,sel_session=s));steps=f['steps']
+        f=stages(dict(ui,sel_session=s));steps=f['steps']
         if not steps:continue
         state='idle' if f['stale'] else s.get('state','idle')
         step=steps[-1] if steps else {}
         rows.append(dict(id=s.get('id'),title=step.get('title') or '暂无步骤记录',state=state,
+                         summary=display_title(step),
                          result=step.get('result',''), index=step.get('index'),
                          updated=_number(s.get('updated')) or 0,agent=agent_name(s.get('agent')),chain=[x.get('status') for x in steps]))
     priority={'running':0,'waiting':1,'error':2,'done':3,'idle':4}
@@ -275,17 +277,18 @@ def agent_rows(ui):
     rows=[];sessions=[s for s in ui.get('sessions') or [] if isinstance(s,dict)]
     for name in (*AGENT_ORDER,'Mac','AI'):
         for s in sorted((x for x in sessions if agent_name(x.get('agent'))==name),key=lambda x:_rank_key(ui,x)):
-            f=workflow(dict(ui,sel_session=s));steps=f['steps']
+            f=stages(dict(ui,sel_session=s));steps=f['steps']
             if not steps:continue                      # nothing to show for this session; try the agent's next one
             rows.append(dict(id=s.get('id'),agent=name,state='idle' if f['stale'] else s.get('state','idle'),title=steps[-1].get('title') or '暂无步骤记录',
-                             index=steps[-1].get('index'),chain=[x.get('status') for x in steps],next=s.get('next')));break
+                             summary=display_title(steps[-1]),
+                             index=steps[-1].get('index'),chain=[x.get('status') for x in steps],stale=f['stale'],next=s.get('next')));break
     return rows[:LIVE_ROWS]
 
 
 def step_flow(row):
-    """(current, next) for the arrow line. A live row points at the next step ('…' until the agent starts it; a host may supply session['next']);
-    a finished row has nothing next, so it gets None and no arrow."""
-    return str(row['title']),(str(row.get('next') or '…') if row.get('state') in LIVE else None)
+    """Only show an explicit next phase when it adds meaningful information."""
+    nxt=stage_title(row.get('next')) if row.get('state') in LIVE else None
+    return str(row.get('summary') or row['title']),nxt if nxt and nxt!=row['title'] else None
 
 
 def render_live(ui,u=1):
@@ -298,15 +301,19 @@ def render_live(ui,u=1):
     txt(420,LROW0+1,'聊聊',11,ACCENT,anchor='ra');hit((386,LROW0-4,40,22),'house_chat')
     for i,row in enumerate(rows):
         y=LROW0+i*LPITCH;live=row['state'] in LIVE;col=COLORS.get(row['state'],DIM);shape=SHAPES.get(row['state'],'dot');idx=row['index']
-        chain=row['chain'];cut=len(chain)>6;chain=chain[-6:];x0=238+RX+(18 if cut else 0);ty=y+17
+        chain=row['chain'];cut=len(chain)>4;chain=chain[-4:];x0=238+RX+(18 if cut else 0);ty=y+17
         gl(175+RX,y+7,3.5,col,shape,u);txt(186+RX,y,row['agent'],11,NAMES.get(row['agent'],'#b9c6e5'),width=44)
         if cut:gl(238+RX,y+7.5,1.3,'#656772','dot',u);gl(243+RX,y+7.5,1.3,'#656772','dot',u)
         if len(chain)>1:box((x0,y+7,13*(len(chain)-1),1),'#4a4b54')
         for j,st in enumerate(chain):
             if j==len(chain)-1:gl(x0+j*13,y+7.5,4.2,col,shape,u,True)
             else:gl(x0+j*13,y+7.5,2.6 if st in ('done','idle') else 3.1,COLORS.get(st,DIM),SHAPES.get(st,'dot'),u)
-        txt(x0+13*(len(chain)-1)+14,y+1,f"第 {idx+1 if isinstance(idx,int) else len(chain)} 步",11,DIM)
+        txt(382,y+1,state_label(row['state'],row.get('stale',False)),11,DIM,width=60,anchor='ra')
         cur,nxt=step_flow(row);known=bool(row.get('next'));cw=224 if nxt is None else 118 if known else 196;shown=_fit(cur,f12,cw*u)
+        # Keep the useful task direction readable in the compact row. An
+        # explicit next phase remains in the data; only omit its arrow here.
+        if ' · ' in cur:
+            nxt=None;cw=224;shown=_fit(cur,f12,cw*u)
         txt(186+RX,ty,cur,12,INK if live else DIM,width=cw);ax=186+RX+f12.getlength(shown)/u+7;ay=ty+7
         if nxt is not None:
             d.line((round(ax*u),round((ay+PY)*u),round((ax+11)*u),round((ay+PY)*u)),fill=DIM,width=max(1,round(1.2*u)))
@@ -326,7 +333,7 @@ def render(ui,u=1,mode='tasks',offset=0):
     im,d,hits,box,txt,hit=_pen(u)
     box((0,0,W-1,PH-1),panel_fill(ui),16,RIM)
     agent=selected_agent(ui)
-    txt(173+RX,13,f'{agent} · 当前步骤' if mode=='steps' else f'{agent} 工作流 · 当前步骤',13,weight=550,width=185-RX)
+    txt(173+RX,13,f'{agent} · 阶段概览' if mode=='steps' else f'{agent} · 当前阶段',13,weight=550,width=185-RX)
     txt(420,14,'返回' if mode=='steps' else '聊聊',11,ACCENT,anchor='ra')
     hit((386,7,40,30),'flat_mode' if mode=='steps' else 'house_chat','tasks' if mode=='steps' else None)
     if mode=='tasks':txt(384,14,'收起',11,ACCENT,anchor='ra');hit((350,7,34,30),'flat_mode','live')
@@ -339,10 +346,10 @@ def render(ui,u=1,mode='tasks',offset=0):
         col=COLORS.get(row['state'],DIM)
         glyph(tile,5,ROW/2,3.2,col,SHAPES.get(row['state'],'dot'),u)
         f=font(round(12*u),450)
-        td.text((17*u,ROW*u/2),_fit(row['title'],f,(RW-22)*u),font=f,fill=INK,anchor='lm')
+        td.text((17*u,ROW*u/2),_fit(row.get('summary') or row['title'],f,(RW-22)*u),font=f,fill=INK,anchor='lm')
         src=max(0,round(-yy*u));dst=max(0,round(yy*u));height=min(tile.height-src,crop.height-dst)
         if height>0:crop.alpha_composite(tile.crop((0,src,tile.width,src+height)),(0,dst))
-        kind,payload=('flat_task',row['id']) if mode=='tasks' else ('detail',(row['id'],row['index'],row['title'],row.get('result','')))
+        kind,payload=('flat_task',row['id']) if mode=='tasks' else ('detail',(row['id'],row['index'],row.get('summary') or row['title'],row.get('result','')))
         hit((LIST[0],LIST[1]-PY+max(0,yy),RW,min(ROW+min(0,yy),LIST[3]-max(0,yy))),kind,payload)
     im.alpha_composite(crop,(round(LIST[0]*u),round(LIST[1]*u)))
     if not rows:txt(185+RX,76,'暂无步骤记录',12,DIM,width=225-RX)

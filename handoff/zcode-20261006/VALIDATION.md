@@ -16,3 +16,15 @@
 - 没有重新测量性能、实时桌面效果或重新启动主桌宠。
 
 发布前测试假密钥改为运行时生成的占位输入，test_ai_lights_data 重跑24项通过。
+
+## 当前桌面回传检查（2026-10-06，源5102d75）
+在独立Windows发布副本运行，未修改桌面主实例或个人数据：
+- test_pet.py：186/186，真实运行数据隔离检查通过。
+- workflow_stages/flat_workspace/task_directions/native_session_sync/popup_material/rest_eyes/core_profile/life/swing/session_lights/ai_lights_data/hat_fx/seated_wake：243项，OK。
+- tools/check_public_files.py：349个跟踪文件，零发现；个人记忆、设置、额度和会话未回传。
+- tools/check_docs.py：24篇文档、87个本地引用，零发现。
+- 桌面Godot查找保留发布版的用户目录解析；文档中的本机用户名匿名化；AWS形状测试值采用同样长度的运行时X占位值。仅发布适配，不改变显示/特效语义。
+- 本次未重新运行全部历史CI套件，也未修复下方历史列出的recovery/core_runtime事项；不宣称全量CI已绿。
+- 本机已有I-33/35/38视觉记录。新示意图明确为模拟分工，不是真实云端会话或账户数据。发布副本没有另启主桌宠。
+
+GitHub密钥检测首次拦截一处Stripe形状的顺序字母假测试值；改成等长运行时X占位值后保留脱敏断言，并补发布检查对应规则。未发现真实密钥，未绕过检测。

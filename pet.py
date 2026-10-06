@@ -2188,8 +2188,9 @@ class Pet:
             self.settings['house_mode'] = True
             self.settings['swing_scene'] = dict(self.settings.get('swing_scene') or {}, scale=1.32)
         self._flat_panel_style = not selftest and self.settings.get('workspace_layout', 'flat') == 'flat'
-        # The user's selected desktop layout is the six-row view.
-        self._flat_mode = 'tasks'
+        # Follow the workspace's current default; the agent list remains expandable.
+        from flat_workspace import DEFAULT_MODE
+        self._flat_mode = DEFAULT_MODE
         self._studio_style = True
         self._moon_house_style = not selftest
         self._house_on = bool(self.settings.get('house_mode', True))
@@ -8342,7 +8343,8 @@ class Pet:
             # magic_style),所以兜个底:至少让退出还点得到,并且把原因写进日志。
             import traceback
             traceback.print_exc()
-            m = tk.Menu(self.root, tearoff=0)
+            from popup_material import SurfaceMenu
+            m = SurfaceMenu(self.root, tearoff=0)
             m.add_command(label="⚠ 菜单出错了,原因见 pet_error.log",
                           state="disabled")
             m.add_separator()
@@ -8359,7 +8361,8 @@ class Pet:
     def _menu(self, parent=None):
         """和桌宠同款主题的弹出菜单:UI_* 深色面板底 + 主文字 + 按钮色
         高亮。右键菜单和全部子菜单都走这一套,不再用系统默认的白底。"""
-        return tk.Menu(parent or self.root, tearoff=0,
+        from popup_material import SurfaceMenu
+        return SurfaceMenu(parent or self.root, tearoff=0,
                        font=ui_font(13), relief="flat", bd=1,
                        bg=UI_PANEL, fg=UI_TEXT,
                        activebackground=UI_BTN, activeforeground=UI_TITLE,
@@ -9065,6 +9068,19 @@ class Pet:
             # 按住拖整个秋千场景:跟手,走互动档(画不动 60fps 的机器停在
             # 30fps)。拖场景不设 self.drag,原来那条 swing+drag 永远走不到
             return 16 if self._fast_ok else 33
+        if getattr(self, "_nap_on_swing", False) and not self.drag:
+            # 秋千打盹安静档:go_sleep 的秋千分支刻意保持 state=="swing"
+            # (场景/绳手/接触不动),所以打盹永远落不进上面的睡眠档,而是
+            # 落进下面的常驻荡 50ms 档,闭眼打盹也按 20fps 全管线重绘
+            # (实测 ~30% 单核)。镜像睡眠档的判据:有互动信号(气泡/贴纸/
+            # 法阵/思考/任何非 zzz 粒子)当帧回互动档,不会"叫不醒";
+            # zzz 是慢飘粒子,10fps 足够。拖拽/场景拖拽/演出在上面的分支
+            # 已先返回,优先级更高。
+            if self.bubble or self.sticker or self.circles or self.thinking_now:
+                return 33
+            if any(p["kind"] != "zzz" for p in self.parts):
+                return 33
+            return 100
         if self.state == "swing":
             return 50                    # 常驻荡:20fps 足够,层推帧是大头
         # 安静待机 20fps:idle 态、没有任何演出元素(气泡/贴纸/法阵/思考/
@@ -9630,8 +9646,9 @@ class Pet:
                                        topmost=self.topmost)
             # 秋千上也会犯困,和地面同一口径(75 秒没人理、没在聊天、不在专注)。
             # 原来入睡判定只写在 idle 分支,默认住秋千就永远不睡,一直 20fps
-            # 推两层窗口。先自然落地下秋千,落地后 idle 分支同一条判定接着
-            # 打哈欠入睡,进 10fps 睡眠档,秋千层随之关掉
+            # 推两层窗口。现行设计(I-5):犯困直接睡在秋千上(go_sleep 秋千
+            # 分支,state 保持 swing 不落地),_frame_delay 的秋千打盹分支给
+            # 10fps 安静档;唤醒走 _wake_from_nap,场景/绳手/接触全程不动
             if (now - self.last_interact > 75 and not self._chat_open()
                     and not self.focus_mode()):
                 self.go_sleep()      # 新坐姿:犯困就睡在秋千上,不再落地
@@ -11668,15 +11685,9 @@ class Pet:
                            fill=(150, 74, 84, 230))
         d = ImageDraw.Draw(source, 'RGBA')
         w, h = source.size
-        if style == 'sleep':
-            eyes = self.cfg.get('eyes', {})
-            for name in ('left', 'right'):
-                ex, ey = eyes.get(name, [.4, .46])
-                x, y = ex*w, ey*h
-                radius = max(w*eyes.get('size', .052)*.65, 7*sk)
-                d.arc((x-radius,y-3*sk,x+radius,y+radius*.7),
-                    15,165,fill=INK+(235,),width=max(1,round(1.5*sk)))
-        elif style:
+        # Sleep already uses _draw_blink above. Drawing another arc here
+        # creates two eyelids per eye (a glasses-like outline).
+        if style and style != 'sleep':
             rate = {'sing':5, 'laugh':13, 'chew':9}.get(style, 1)
             phase_time = math.asin(phase/8)/rate
             if style == 'sing':
@@ -11735,6 +11746,9 @@ class Pet:
         lid_line = eyes.get("lid_line", False)
         dd = ImageDraw.Draw(frame, "RGBA") if lid_line else None
         sk = self.scale * SS
+        left, right = eyes.get("left", (.4, .46)), eyes.get("right", (.4, .46))
+        eye_dx = (right[0] - left[0]) * w2
+        slope = max(-.45, min(.45, (right[1] - left[1]) * h2 / eye_dx)) if abs(eye_dx) > 1 else 0.0
         for (cxp, cyp, patch) in self._blink_patches:
             pw, ph = patch.size
             frame.paste(patch, (int(paste_x + cxp - pw / 2),
@@ -11742,8 +11756,14 @@ class Pet:
             if dd is not None:
                 # 闭眼的睫毛线("︶"):只盖肤色读起来是一块空白,有这条线才像闭眼
                 x, y = paste_x + cxp, paste_y + cyp
-                dd.arc((x - pw * 0.30, y - ph * 0.22, x + pw * 0.30, y + ph * 0.16),
-                       18, 162, fill=(66, 46, 82, 235), width=max(2, round(1.5 * sk)))
+                # Follow the painted head's tilt; a horizontal arc on each
+                # slanted eye looks pasted on. One continuous, shallow curve.
+                points = []
+                for n in range(25):
+                    u = n / 24
+                    dx = (u - .5) * pw * .60
+                    points.append((x + dx, y + slope * dx + ph * (.06 + .10 * (1 - (2*u-1)**2))))
+                dd.line(points, fill=(66, 46, 82, 235), width=max(2, round(1.5 * sk)), joint="curve")
 
     def _draw_sticker(self, frame, d, now, k, spr_left, spr_top1, spr_w1, warped):
         previous = self._sticker_previous
@@ -11921,6 +11941,8 @@ class InteractionCard:
         self.u = u
         x, y = self.position(x+8, y+8, w, h, area)
         win.title('小乔 · 互动卡片')
+        from popup_material import apply_surface
+        apply_surface(win)
         win.overrideredirect(True)
         win.attributes('-topmost', True)
         win.configure(bg=UI_BG)
@@ -12135,6 +12157,8 @@ class ChatBox:
         self.win.attributes("-topmost", True)
         self.win.configure(bg=KEY)
         self.win.attributes("-transparentcolor", KEY)
+        from popup_material import apply_surface
+        apply_surface(self.win)
 
         # 尺寸按「她所在那块屏」算:副屏小也不溢出,输入栏始终在屏幕内
         scene = getattr(pet, "_swing", None)
@@ -12489,7 +12513,8 @@ class ChatBox:
 
     def _log_menu(self, e):
         A = self.A
-        m = tk.Menu(self.win, tearoff=0, bg=A.hexc(A.ELEV), fg=A.hexc(A.TEXT),
+        from popup_material import SurfaceMenu
+        m = SurfaceMenu(self.win, tearoff=0, bg=A.hexc(A.ELEV), fg=A.hexc(A.TEXT),
                     activebackground=A.hexc(A.BLUE), activeforeground="#ffffff",
                     disabledforeground=A.hexc(A.TEXT3), bd=0)
         index = self.log.index(f"@{e.x},{e.y}")
@@ -12683,6 +12708,9 @@ def main():
     root = tk.Tk()
     p = Pet(root, selftest)
     if not selftest:
+        # Main entry only: constructing a test Pet never reads native sessions.
+        from native_session_sync import start as start_native_sessions
+        p._native_session_thread = start_native_sessions(AI_SESSION_DIR)
         p._start_watchdog()   # 主循环卡死看门狗(测试套件直接建 Pet,不经过这里)
     root.mainloop()
     if selftest:
