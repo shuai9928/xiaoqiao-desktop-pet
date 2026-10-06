@@ -75,3 +75,12 @@ Linux 云端不能据 Windows ctypes/Tk 主程序的导入失败宣称实现失�
 
 后续成果请提交 GitHub 分支，写清修改文件、实际运行的检查、未完成的 Windows 验证及预览位置。
 用户尚未指定下一轮具体功能，本交接不把历史建议当成新的开发命令。
+
+## 后续更新（2026-10-06，云端）
+
+云端 c398bdc、9ed04b7 的“一 Agent 一行、当前步骤 → 下一步、去面板气泡”已迁入根目录
+flat_workspace.py 与 test_flat_workspace.py（I-31）；上文“未自动接入”的说法到此为止。
+LIVE_H=184、PET_TOP=15、hat_fx_pad 与帽上特效均保留。预览：
+[evidence/live-view-port-preview.png](evidence/live-view-port-preview.png)（模拟数据，非真机截图）。
+Linux 云端只能跑桩化的 test_flat_workspace（42 项通过，3 项需要真实 Pet）；Windows 真机验收与规定
+回归套件仍待在本机执行，结论为 INCONCLUSIVE。下一步文字仅来自 session['next']，宿主未提供时显示“…”。

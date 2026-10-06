@@ -44,14 +44,6 @@ class FlatTests(unittest.TestCase):
  def mixed(self):
   u=self.ui(6);s=u['sel_session']
   u['sessions']=[dict(s,id=str(i),title=f'Task {i}',state=st) for i,st in enumerate(('running','waiting','error','done','done','idle'))];u['sel_session']=u['sessions'][0];return u
- def test_live_mode_lists_only_live_sessions_capped_at_two(self):
-  _,hits,_=f.render(self.mixed(),1,'live')
-  self.assertEqual([h[-1] for h in hits if h[4]=='flat_task'],['0','1'])
-  self.assertEqual([(h[4],h[-1]) for h in hits if h[4] in ('flat_mode','flat_agent')],[('flat_agent','ZCode')])
- def test_live_mode_hides_finished_sessions_even_when_few_are_live(self):
-  u=self.mixed();u['sessions']=[dict(s,state=st) for s,st in zip(u['sessions'],('running','done','done','idle','done','done'))];u['sel_session']=u['sessions'][0]
-  _,hits,_=f.render(u,1,'live')
-  self.assertEqual([h[-1] for h in hits if h[4]=='flat_task'],['0']);self.assertEqual([(h[4],h[-1]) for h in hits if h[4] in ('flat_mode','flat_agent')],[('flat_agent','ZCode')])
  def test_live_mode_stays_in_compact_height_and_rest_is_transparent(self):
   for scale in (1,1.5):
    im,hits,_=f.render(self.mixed(),scale,'live');cut=round((f.PY+f.LIVE_H)*scale)
@@ -70,7 +62,7 @@ class FlatTests(unittest.TestCase):
  def test_live_mode_is_cross_agent_while_expanded_list_follows_selected_agent(self):
   ui=self.mixed();ui['sessions'][1]['agent']='claude-code';ui['flat_agent']='ZCode'
   _,live,_=f.render(ui,1,'live');_,tasks,_=f.render(ui,1,'tasks')
-  self.assertEqual([h[-1] for h in live if h[4]=='flat_task'],['0','1'])
+  self.assertEqual([h[-1] for h in live if h[4]=='flat_task'],['1','0'])                # Claude's waiting session, then ZCode's running one
   self.assertNotIn('1',[h[-1] for h in tasks if h[4]=='flat_task'])
  def test_task_click_from_live_view_opens_that_agents_steps(self):
   ui=self.mixed();ui['sessions'][1]['agent']='claude-code'
@@ -83,10 +75,6 @@ class FlatTests(unittest.TestCase):
   ui=self.mixed()
   for r in f.rows_for(ui,'live'):
    s=next(x for x in ui['sessions'] if x['id']==r['id']);self.assertEqual(len(r['chain']),len(f.workflow(dict(ui,sel_session=s))['steps']))
- def test_live_title_prioritises_attention(self):
-  self.assertEqual(f.live_title([{'state':'running'},{'state':'waiting'}]),'1 个在等你确认')
-  self.assertEqual(f.live_title([{'state':'running'},{'state':'running'}]),'我看着呢 · 2 个在跑')
-  self.assertEqual((f.live_title([{'state':'done'}]),f.live_title([])),('都忙完啦','暂时没有任务'))
  def test_status_shapes_differ_not_only_in_colour(self):
   from PIL import ImageChops
   masks={}
@@ -125,6 +113,8 @@ class FlatTests(unittest.TestCase):
   if f.PY:self.assertLess(t,f.PY)                                      # with headroom, the hat rises above the panel
   self.assertLessEqual(b,f.PY+f.LIVE_H-4)                              # soles stay inside the compact panel (the expanded view has the whole column)
   self.assertGreaterEqual(l,0);self.assertLessEqual(r,f.LIST[0]-12)    # inside the pet column, clear of the step column
+  self.assertGreaterEqual(f.LPITCH,32)                                  # a live row is two text lines (name + arrow line): rows must not overlap
+  self.assertLessEqual(f.LROW0+f.LIVE_ROWS*f.LPITCH,120)                # and all of them fit above the divider
  def test_hits_stay_inside_the_window(self):
   for mode in ('live','tasks','steps'):
    for scale in (1,1.5):
@@ -134,13 +124,8 @@ class FlatTests(unittest.TestCase):
      if kind in ('flat_task','detail') and mode!='live':self.assertLessEqual(x+w,round(414*scale))   # rows end before the scrollbar
  def test_long_step_title_is_cut_before_the_right_edge(self):
   u=self.mixed();s=u['sessions'][0];s['actions']=[{'a':'很长很长的步骤标题'*8,'r':'OK','t':u['now']-1}];u['sel_session']=s
-  im,_,_=f.render(u,1,'live');band=im.crop((421,f.PY+36,432,f.PY+56))
+  im,_,_=f.render(u,1,'live');band=im.crop((421,f.PY+f.LROW0+16,432,f.PY+f.LROW0+32))
   self.assertFalse(any(r>200 and g>200 and b>200 and a>200 for r,g,b,a in band.getdata()))
- def test_step_count_sits_on_the_chain_row_not_at_the_right_edge(self):
-  ui=self.mixed();r=f.rows_for(ui,'live')[0];n=min(len(r['chain']),6);x0=(208 if len(r['chain'])>6 else 190)+f.RX;lx=x0+13*(n-1)+14
-  im,_,_=f.render(ui,1,'live')
-  def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
-  self.assertTrue(bright(lx,lx+30,56,70));self.assertFalse(bright(395,421,36,50))
  def test_live_rows_feed_the_reaction_rules_without_adapting(self):
   import agent_reactions as ar
   rows=f.rows_for(self.mixed(),'live');rr=ar.Reactor('few',day_of=lambda t:0)
@@ -175,6 +160,41 @@ class FlatTests(unittest.TestCase):
    for x,y,w,h,kind,_ in hits:
     if kind=='flat_agent':self.assertTrue(f.LIST[0]-4<=x and x+w<=424,(n,x,w))
    q=im.crop((425,f.PY+160,438,f.PY+f.PH-24));self.assertEqual(len(set(q.getdata())),1,n)   # nothing spills into the right margin (stop above the rounded corner)
+ def trio(self):
+  u=self.ui(1);s=u['sel_session'];now=u['now']
+  def mk(i,agent,state,age,*titles):return dict(s,id=i,agent=agent,state=state,updated=now-age,actions=[{'a':t,'r':'OK','t':now-30+k} for k,t in reversed(list(enumerate(titles)))])   # session files keep the newest action first
+  u['sessions']=[mk('z1','zcode','waiting',1,'写入补丁'),mk('c0','claude','done',500,'旧任务'),mk('c1','claude','running',1,'读配置','改代码','跑测试'),mk('x1','codex','done',50,'整理文档')]
+  u['sel_session']=u['sessions'][0];return u
+ def test_live_shows_one_row_per_agent_in_a_fixed_order(self):
+  rows=f.agent_rows(self.trio())
+  self.assertEqual([(r['agent'],r['id'],r['state']) for r in rows],[('Codex','x1','done'),('Claude','c1','running'),('ZCode','z1','waiting')])   # Claude's live session beats its older finished one
+  self.assertEqual([r['title'] for r in rows],['整理文档','跑测试','写入补丁']);self.assertEqual(len(rows[1]['chain']),3)
+  _,hits,_=f.render(self.trio(),1,'live');tasks=sorted(h for h in hits if h[4]=='flat_task')
+  self.assertEqual([h[-1] for h in tasks],['x1','c1','z1']);self.assertTrue(all(a[1]+a[3]<=c[1] for a,c in zip(tasks,tasks[1:])))   # three rows, top to bottom, no overlap
+  self.assertEqual([h[-1] for h in sorted(hits) if h[4]=='flat_agent'],['Codex','Claude','ZCode'])                                   # each name opens that agent's list
+ def test_an_agent_without_sessions_has_no_row_and_the_list_is_capped(self):
+  u=self.trio();u['sessions']=[x for x in u['sessions'] if x['agent']!='codex']
+  self.assertEqual([r['agent'] for r in f.agent_rows(u)],['Claude','ZCode'])
+  u=self.trio();u['sessions']=u['sessions']+[dict(u['sessions'][0],id='m1',agent='mac'),dict(u['sessions'][0],id='a1',agent='who-knows')]
+  self.assertEqual(len(f.agent_rows(u)),f.LIVE_ROWS)
+ def test_a_session_without_steps_does_not_hide_the_agents_other_session(self):
+  u=self.trio();u['sessions']=u['sessions']+[dict(u['sessions'][2],id='c2',actions=[],updated=u['now'])]
+  self.assertEqual([r['id'] for r in f.agent_rows(u) if r['agent']=='Claude'],['c1'])
+ def test_step_flow_points_at_the_next_step_and_shows_an_ellipsis_until_it_exists(self):
+  self.assertEqual(f.step_flow({'title':'Read x','state':'running'}),('Read x','…'));self.assertEqual(f.step_flow({'title':'Read x','state':'waiting','next':'Edit y'}),('Read x','Edit y'))
+  self.assertEqual(f.step_flow({'title':'Read x','state':'done'}),('Read x',None))      # a finished agent has no next step, so no arrow
+ def test_there_is_no_header_title_any_more_and_the_step_count_follows_the_dots(self):
+  ui=self.trio();r=f.agent_rows(ui)[0];n=min(len(r['chain']),6);lx=238+f.RX+(18 if len(r['chain'])>6 else 0)+13*(n-1)+14
+  im,_,_=f.render(ui,1,'live')
+  def bright(x1,x2,y1,y2):return [q for q in im.crop((x1,f.PY+y1,x2,f.PY+y2)).getdata() if q[3]>200 and q[0]>150 and q[1]>150 and q[2]>170]
+  self.assertTrue(bright(lx,lx+30,f.LROW0,f.LROW0+14))                                   # '第 N 步' right after the dots
+  self.assertFalse(bright(173+f.RX,176+f.RX+8,2,8))                                       # nothing is drawn where the title used to be
+ def test_a_finished_row_has_no_arrow_and_a_live_row_has_one(self):
+  def after_the_text(row_state):                                                      # only the arrow and the '…' can be here: the 3-char step title ends near x=232
+   u=self.trio();u['sessions']=[dict(x,state=row_state) if x['id']=='c1' else x for x in u['sessions']];im,_,_=f.render(u,2,'live')
+   y=f.PY+f.LROW0+f.LPITCH+17
+   return sum(1 for q in im.crop((236*2,round(y*2),330*2,round((y+14)*2))).getdata() if q[3]>200 and sum(q[:3])>300)
+  self.assertGreater(after_the_text('running'),10);self.assertEqual(after_the_text('done'),0)
  def test_task_click_selects_exact_task_and_scroll_resets(self):
   p=ui_owner();p._flat_scroll=100;pet.Pet._ui_hit(p,'flat_task','8');self.assertEqual(p._book_sel,('sid','8'));self.assertEqual(p._flat_mode,'steps');self.assertEqual(p._flat_scroll,0)
  def test_provider_selection_filters_workflow_and_steps(self):

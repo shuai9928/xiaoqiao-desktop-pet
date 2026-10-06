@@ -922,3 +922,11 @@ PET_TOP 10→15、LIVE_H 178→184，展开窗仍为 440×274，不增加展开�
    最后一轮30秒演示定时恢复已验证：真实额度/工作流、1.0尺寸、烟0、visible=true；stderr空。
 8. **结论：ACCEPT（执行者自审，本批A1+A2）**。原主实例菜单退出、新主实例两档运行及恢复真实数据
    均完成。用户后续视觉反馈可另开迭代，不扩大至A3/A4/A5。
+
+
+## 2026-10-06 I-31 实时视图迁入云端 c398bdc/9ed04b7（INCONCLUSIVE，待 Windows 验收）
+- 改动：实时视图每个 Agent 一行（固定序 Codex→Claude→ZCode，LIVE_ROWS=3）；状态点在名字右侧；
+  第二行“当前步骤 → 下一步”（session['next'] 缺省为“…”，已结束行无箭头）；去掉右上角标题与“另有 N 个”行。
+  live_title 已删除。面板内对话气泡曾试做并按用户要求去掉，**不要重复引入**（桌宠说话仍用宿主自己的气泡）。
+- 保留：LIVE_H=184、PET_TOP=15、hat_fx_pad、帽上特效、agent_companion 绘制。
+- 回滚：还原 flat_workspace.py / test_flat_workspace.py 到 05e8a90 即回到 LIVE_ROWS=2 的旧实时视图。

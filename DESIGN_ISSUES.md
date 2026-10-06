@@ -6,6 +6,22 @@
 
 ## OPEN
 
+### I-31 实时视图迁入云端「一 Agent 一行 + 下一步 + 无气泡」（P2，2026-10-06）
+- 出现条件：用户确认预览图后，要求把云端 c398bdc、9ed04b7 的实时视图改动迁入根目录
+  （此前交接明确“未自动接入”）。用户原话要点：右上角文字区去掉、Agent 状态点放在名字右边、
+  下一行“当前步骤 → 下一步”、已结束行不再占位，使 3 个 Agent 同时可见；面板内对话气泡试做后又要求去掉。
+- 位置与范围：flat_workspace.py 的 render_live / rows_for / agent_rows / step_flow、test_flat_workspace.py。
+  不改 pet.py、fx.py、hat_fx.py、数据层；展开视图与 agent_companion 不变。
+- 保留的本机适配：LIVE_H=184、PET_TOP=15、hat_fx_pad 窗口余量、帽上特效合成、agent_companion 特效绘制。
+  仅 SOURCE_REVISION 更新为 9ed04b7。
+- 已知边界：① 下一步文字只来自 session['next']（宿主可选提供，仓库内未找到来源），
+  没有时显示灰色“…”，已结束行不画箭头；② 行序固定 Codex→Claude→ZCode（Mac、AI 随后），
+  不按“等你确认”置顶；③ pet.py:2192 启动默认 _flat_mode='tasks'，实时视图经“收起”进入。
+- 通过条件：预览图用户确认（已确认）；定向测试通过；Windows 真实桌面 1.0/0.76 两档、窗口顶端/命中区域、
+  帧耗时与主实例菜单退出再启动验收。
+- 证据：handoff/zcode-20261006/evidence/live-view-port-preview.png（模拟数据，非真机截图）。
+- 状态：INVESTIGATING —— 代码与云端可测部分已迁入；Windows 真机验收未做。
+
 ### I-30 帽上特效中间态浓度 B1~B5(P1，2026-10-06 用户方向)
 - 用户反馈:I-29 落地后"还是太单调",要"介于现版和王者荣耀原版之间"。
 - 方法:五角色多智能体流水线(设计规格/渲染实现/视觉审核/比例核验/颜色对比度),

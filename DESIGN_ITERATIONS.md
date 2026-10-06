@@ -1309,3 +1309,29 @@ PET_TOP 10→15、LIVE_H 178→184，展开窗仍为 440×274，不增加展开�
 ACCEPT。回归 test_pet 177/177 + 五套 + test_core_profile 全绿。P3 遗留：顶星偶发
 双星叠置、烟柱静帧轻微串珠（动态即消）。流程资产：tools/fx2_harness.py 可复用
 同口径测量；证据 outputs/fx2/ 留档。
+
+## Claude 云端 · 2026-10-06 CST · I-31 实时视图迁入（一 Agent 一行 / 下一步 / 无气泡）
+
+1. **观察**：根目录实时视图仍是 1c88b82 版本：右上角一行标题（“我看着呢 · N 个在跑”）、
+   最多 2 行、其余折成“另有 N 个会话 · 展开”。云端 c398bdc、9ed04b7 已有新版，交接文档注明未接入。
+2. **假设**：去掉标题与折叠行、改为每个 Agent 一行（状态点在名字右侧，第二行“当前步骤 → 下一步”），
+   同样 LIVE_H 内可同时放 3 个 Agent；不新增装饰，不动人物与帽上特效。
+3. **实验**：先出“现状 vs 迁入后”对比预览（根目录真实模块渲染；迁入后为 scratchpad 副本，
+   不动仓库）。用户确认图片后才改代码。预览里的“下一步”文字是模拟数据。
+4. **实现**：三方合并（base=1c88b82，ours=根目录，theirs=9ed04b7）。生产文件仅 1 处冲突
+   （LIVE_H/LIVE_ROWS 同一行）：取 LIVE_H=184（本机适配）+ LIVE_ROWS=3、LROW0/LPITCH（云端）；
+   SOURCE_REVISION→9ed04b7。测试文件合并无冲突；修正云端 trio() 造数顺序（真实 trace_rows 约定
+   “文件里最新在前”，旧写法只在桩 workflow 下成立）。
+5. **证据**：evidence/live-view-port-preview.png（模拟数据，非真机；桌宠为 swing_studio.png 按
+   pet_content() 摆放，帽上特效为 tools/fx2_harness 离线 HatFX2 渲染，含 hat_fx_pad 顶部余量）。
+6. **审查**：宪法逐条——不加装饰/发光（2/3）；人物与帽尖不被遮挡，面板未越出原范围（1）；
+   真实尺寸验收（9）**未做**，见结论。更正：预览说明里曾把 Codex 排首说成“等确认置顶”，
+   实为固定 AGENT_ORDER，已在 I-31 写明。
+7. **回归**：Linux 容器无 tkinter，pet 桩化（trace_rows/ai_session_stale/ai_light_style 自 pet.py 原样抽取），
+   test_flat_workspace 42 项通过，3 项需真实 Pet 未运行（native_composition、滚动/点选各一）；
+   5 个变异（行数、已结束行画箭头、忽略 next、行序反转、去掉名字命中）均被测试抓到。
+   **未运行**：test_pet / test_life / test_swing / test_session_lights / test_ai_lights_data /
+   test_core_profile / test_hat_fx / test_agent_companion（均依赖 Windows 主程序导入），
+   以及已知的 test_recovery mint 计数失败（本批不涉及）。
+8. **结论：INCONCLUSIVE**（代码与逻辑测试已就绪；缺 Windows 真实桌面 1.0/0.76 验收、规定五套件、
+   帧耗时与主实例重启）。请在 Windows 上跑规定回归并肉眼复核后再改 ACCEPT。
