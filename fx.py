@@ -9,9 +9,13 @@
 """
 import math
 import random
+import threading
 import time
+from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+import hat_fx   # B 系列(HatFX2)在其 HatFX 之上做子类升级;它不反依赖 fx
 
 MAGIC_A = (168, 216, 255)
 MAGIC_B = (199, 155, 255)
@@ -249,6 +253,105 @@ def _star_icon_sprite(h, stroke, rgb=GOLD_L, ink=(62, 34, 96)):
     return im
 
 
+def _puff_sprite(u, sk):
+    """喷气团第 u 档(0..1):一团偏冷的柔白雾从小鼓到大、边缘先散。
+
+    两层:外层大而淡的雾,内层小而亮的芯,芯比雾消失得快 —— 看着是"噗"
+    地喷出来再化开,而不是一个均匀变淡的圆饼。
+    """
+    e = 1 - (1 - u) ** 2.2
+    r = (9 + 26 * e) * sk
+    size = int(2 * (r * 1.5) + 4)
+    c = size / 2
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    fog = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(fog).ellipse([c - r, c - r * 0.82, c + r, c + r * 0.82],
+                                fill=(226, 232, 255, int(150 * (1 - u) ** 1.3)))
+    im.alpha_composite(_soft_half(fog, r * 0.45))
+    if u < 0.55:
+        f = 1 - u / 0.55
+        cr = r * 0.45
+        core = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        ImageDraw.Draw(core).ellipse([c - cr, c - cr, c + cr, c + cr],
+                                     fill=(255, 255, 255, int(200 * f)))
+        im.alpha_composite(_soft_half(core, cr * 0.6))
+    return im
+
+
+def _with_glow(im, rgb, blur, alpha=150):
+    """给一张小精灵垫一层同形状的柔光(按精灵自身 alpha 糊开)。"""
+    glow = Image.new("RGBA", im.size, rgb + (0,))
+    glow.putalpha(im.getchannel("A").point(lambda v: v * alpha // 255))
+    out = _soft(glow, blur)
+    out.alpha_composite(im)
+    return out
+
+
+def _planet_sprite(sk):
+    """带环小行星:淡紫星球 + 斜着的金色细环,环的后半圈压在球后面。"""
+    size = int(34 * sk)
+    c = size / 2
+    r = 6.5 * sk
+    ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).ellipse([c - 12 * sk, c - 3.4 * sk, c + 12 * sk, c + 3.4 * sk],
+                                 outline=(255, 226, 160, 235), width=max(1, int(1.3 * sk)))
+    back = ring.copy()
+    back.paste((0, 0, 0, 0), (0, int(c), size, size))        # 只留上半圈(远侧)
+    front = ring
+    front.paste((0, 0, 0, 0), (0, 0, size, int(c)))          # 只留下半圈(近侧)
+    body = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(body)
+    d.ellipse([c - r, c - r, c + r, c + r], fill=(176, 150, 250, 255))
+    hl = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(hl).ellipse([c - r * 0.75, c - r * 0.8, c + r * 0.15, c + r * 0.05],
+                               fill=(236, 226, 255, 190))
+    body.alpha_composite(_soft(hl, r * 0.25))
+    body.putalpha(ImageChops.multiply(body.getchannel("A"), _disc_mask(size, c, r)))
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.alpha_composite(back)
+    out.alpha_composite(body)
+    out.alpha_composite(front)
+    out = out.rotate(-18, Image.BICUBIC)                     # 预渲染阶段转一次,和帽檐同向斜
+    return _with_glow(out, (190, 170, 255), 2.2 * sk)
+
+
+def _disc_mask(size, c, r):
+    m = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(m).ellipse([c - r, c - r, c + r, c + r], fill=255)
+    return m
+
+
+def _moon_sprite(sk):
+    """金色弯月:圆盘挖掉一个偏移的圆。"""
+    size = int(26 * sk)
+    c = size / 2
+    r = 6.2 * sk
+    m = _disc_mask(size, c, r)
+    cut = _disc_mask(size, c, r * 0.86)
+    cut = ImageChops.offset(cut, int(2.9 * sk), -int(1.6 * sk))
+    alpha = ImageChops.subtract(m, cut)
+    im = Image.new("RGBA", (size, size), (255, 224, 140, 0))
+    im.putalpha(alpha)
+    return _with_glow(im, (255, 214, 120), 2.4 * sk, 170)
+
+
+def _crystal_sprite(sk):
+    """薄荷色四角星晶,中间一点白芯。"""
+    size = int(28 * sk)
+    c = size / 2
+    ro, ri = 8.0 * sk, 2.3 * sk
+    pts = []
+    for i in range(8):
+        rr = ro if i % 2 == 0 else ri
+        a = -math.pi / 2 + math.pi * i / 4
+        pts.append((c + math.cos(a) * rr, c + math.sin(a) * rr))
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.polygon(pts, fill=(150, 238, 206, 255))
+    d.ellipse([c - 1.6 * sk, c - 1.6 * sk, c + 1.6 * sk, c + 1.6 * sk], fill=(245, 255, 250, 255))
+    return _with_glow(im, (140, 235, 200), 2.2 * sk, 170)
+
+
 def _orb_sprite(r, rgb):
     """一颗带柔光的星核:外圈大光晕 + 亮白芯。"""
     size = int(r * 4)
@@ -273,19 +376,533 @@ def _alpha_scaled(im, a):
     return out
 
 
+# ---------------- 帽上特效第二批 B1~B5(outputs/fx2/design_spec.md) ----------------
+def _goldized(sprite, skirt=0):
+    """把 dust 精灵按自身 alpha 重上色成高饱和金(FIX-1,颜色官 FAIL 项)。
+
+    dust-gold.png 实测主导色是粉灰紫(H≈340°,核 S≈0.13),且是大平顶团
+    (82px α≥200):直接换色后复合进深底(H≈24,22,51)会在混色区掉到
+    H≈37°,严格金像素仍为 0。这里做三件事:①alpha 曲线 γ0.55 压平,
+    把中段晕提进可读区;②色相换 (255,215,40)(纯色 H≈49°,两侧留裕量,
+    复合 α0.4~0.95 全程落在 H40~55° 金带);③白芯收窄到 γ6 极点。
+    skirt>0 时再把低于该阈值的裙边归零(B3 萤火用:压住 diff 足迹,
+    常驻覆盖才进预算)。只在预烘焙阶段用。"""
+    a = sprite.getchannel("A")
+    if skirt:
+        a = a.point(lambda v: 0 if v < skirt else v)
+    flat = a.point(lambda v: min(255, round((v / 255.0) ** 0.55 * 255)))
+    out = Image.new("RGBA", sprite.size, (255, 215, 40, 0))
+    out.putalpha(flat)
+    core = Image.new("RGBA", sprite.size, (255, 252, 240, 0))
+    core.putalpha(a.point(lambda v: int((v / 255.0) ** 6 * 255)))
+    out.alpha_composite(core)
+    return out
+
+
+def _trim_skirt(sprite, floor):
+    """剪掉 alpha 低于 floor 的裙边(B3 萤火足迹收敛用),预烘焙阶段专用。"""
+    out = sprite.copy()
+    out.putalpha(out.getchannel("A").point(lambda v: 0 if v < floor else v))
+    return out
+
+
+def _alpha_idx(level):
+    """把 0..1 的目标透明度吸附到 hat_fx.ALPHAS 的 8 档上(取最近档)。
+
+    直取 int(level*7) 会把 0.78 压到 0.62 档(老 A1 就是这么丢亮度的);
+    最近档吸附让"头槽 0.78~0.95 / 烟核 0.78"这些规格值原样落表。"""
+    best, bi = 1e9, 0
+    for i, a in enumerate(hat_fx.ALPHAS):
+        d = abs(a - level)
+        if d < best:
+            best, bi = d, i
+    return bi
+
+
+class HatFX2(hat_fx.HatFX):
+    """B 系列帽上特效层:A1→B1 渐变星轨光带、A2→B2 核晕双层星烟、
+    新增 B3 常驻微氛围(萤火+帽檐符文微光)、B4 思考起止星爆、B5 完成环爆。
+
+    设计规格 outputs/fx2/design_spec.md。与 A1/A2 的关系:
+    - 槽位 12×3 拖尾 + 14 烟 + 3 萤火 + 3 天体(既有) + 6 微光 + 2 爆
+      = 峰值 64(常态 ≤59),符合全局硬阈值 C3;
+    - 所有精灵在 _bake_b 一次烘焙完(现有 PNG 重烘焙 + 程序化合成),
+      运行时只贴图 + 少量矢量线,零 blur/resize/bake;
+    - 全部画在人物剪影后层(hat.draw 既有挂点),人物不透明像素零变化;
+    - 触发一律沿用既有 gain_star(hat_fx=True) 零奖励通道,位置用像素。
+
+    接线方式:FX.build 拿到 hat_fx.bake() 的实例后调用 upgrade() 原位升级
+    (只换 __class__,对象身份不变 —— test_hat_fx 锁定 layer.hat 就是 bake()
+    的返回值,harness/pet 也只认 fx.hat 一个挂点)。素材不全时 upgrade
+    返回 False,留在现 A1/A2 行为(规格 C5 降级链);ui_reduced_anim 由
+    pet._hat_fx_enabled_now 整层关断,B3 随之关闭。
+    """
+
+    b_series = True          # pet.gain_star 据此传 energy/girl_box 并放宽背层裁剪
+    TRAIL_SLOTS = 12         # B1:3 天体 × 12 采样槽(峰值 36)
+    SMOKE_SLOTS = 14         # B2:14 槽,发射 7/s(fast)/4/s(reduced)
+    TRAIL_LIFE = 1.15        # B1 生命周期 0.82 → 1.15s
+    SMOKE_LIFE = 1.3         # B2 生命周期 1.25 → 1.3s
+    CAP = 64                 # 全局硬阈值 C3:粒子总数封顶
+    CT27 = math.cos(math.radians(27.0))   # 帽檐倾角,B1 外漂/萤火椭圆同向
+    ST27 = math.sin(math.radians(27.0))
+
+    def __init__(self, sprites, pixel_scale):
+        super().__init__(sprites, pixel_scale)
+        self._reset_state()
+
+    # ---------- 烘焙 ----------
+    @classmethod
+    def _bake_b(cls, assets_dir, ps):
+        """B 系列全部精灵,只在 FX.build 时跑一次;缺素材返回 None。"""
+        if not assets_dir:
+            return None
+        root = Path(assets_dir) / "hat_fx_v1"
+        src = {}
+        try:
+            for name in ("dust-gold", "dust-lilac", "dust-mote", "smoke-lilac"):
+                im = Image.open(root / (name + ".png")).convert("RGBA")
+                box = im.getchannel("A").point(lambda v: 255 if v > 4 else 0).getbbox()
+                if not box:
+                    return None
+                src[name] = im.crop(box)
+        except (OSError, ValueError):
+            return None
+
+        def baked(im, extent):
+            factor = max(2, extent * ps) / max(im.size)
+            size = tuple(max(1, round(v * factor)) for v in im.size)
+            return im.convert("RGBa").resize(size, Image.Resampling.LANCZOS).convert("RGBA")
+
+        def faded(sprite, a):
+            out = sprite.copy()
+            out.putalpha(sprite.getchannel("A").point(lambda v, a=a: round(v * a)))
+            return out
+
+        # B1:三张现有 dust 重烘焙 extent 12→15,沿程配色 金→暖白→紫。
+        # FIX-1:金色做进精灵本体(_goldized 重上色),不再依赖细连接线。
+        gold15 = _goldized(baked(src["dust-gold"], 15))
+        trail_dust = [
+            [None] + [faded(gold15, a) for a in hat_fx.ALPHAS[1:]],
+            [None] + [faded(baked(src["dust-mote"], 15), a) for a in hat_fx.ALPHAS[1:]],
+            [None] + [faded(baked(src["dust-lilac"], 15), a) for a in hat_fx.ALPHAS[1:]],
+        ]
+        # B3 萤火(FIX-2):extent 11→16(≈13px@1x,真机可感),4 档亮度
+        # 0.22~0.55;金萤火与 B1 头槽同一套重上色金,并剪掉最淡裙边压足迹
+        # (常驻覆盖预算);符文微光同步收小一档(4.6×ps,保持极淡)
+        fly_src = {"dust-lilac": _trim_skirt(baked(src["dust-lilac"], 16), 24),
+                   "dust-gold": _goldized(baked(src["dust-gold"], 16), skirt=24)}
+        flies = [[_alpha_scaled(fly_src[n], 0.22 + 0.33 * j / 3)
+                  for j in range(4)]
+                 for n in ("dust-lilac", "dust-gold", "dust-lilac")]
+        # B3 符文微光:_sigil_sprite 预合成 6 枚 × 4 档(0.14~0.20,极淡)
+        sigils = [[_alpha_scaled(_sigil_sprite(4.6 * ps, 1700 + i), 0.14 + 0.02 * j)
+                   for j in range(4)] for i in range(6)]
+        # B2:星烟双层合成 —— 底部暖白亮核 + 烟 PNG 紫晕 + 顶一颗金星点,
+        # 4 档"成长"(核先亮 → 晕展开)。晕烘焙系数 0.62×0.78 = 晕峰 0.48。
+        halo = baked(src["smoke-lilac"], 36)
+        w, h = halo.size
+        smoke_sprites = []
+        for stage in range(4):
+            g = stage / 3
+            im = _alpha_scaled(halo, 0.62 * (0.55 + 0.45 * g))
+            core = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            crx, cry = 0.11 * w, 0.09 * h
+            ImageDraw.Draw(core).ellipse(
+                [w / 2 - crx, h * 0.70 - cry, w / 2 + crx, h * 0.70 + cry],
+                fill=(255, 246, 214, int(230 * (1 - 0.25 * g))))
+            im.alpha_composite(_soft(core, 0.06 * h))
+            # 顶一颗金星点(FIX-1 配套):实心四角星体,复合进深底后仍落在
+            # 严格金带;旧 _flash_sprite 细线版经降采样读不出金(H≈34°)
+            sr = max(3.0, 0.13 * h)
+            spts = []
+            for kk in range(8):
+                rr = sr if kk % 2 == 0 else sr * 0.40
+                aa = -math.pi / 2 + math.pi * kk / 4
+                spts.append((sr + math.cos(aa) * rr, sr + math.sin(aa) * rr))
+            star = Image.new("RGBA", (int(sr * 2) + 2, int(sr * 2) + 2), (0, 0, 0, 0))
+            sd = ImageDraw.Draw(star)
+            sd.polygon(spts, fill=(255, 215, 40, 255))
+            # 不加白芯点:白芯经紫晕/降采样混成 mauve 灰点(验收官残影判据),
+            # 纯金星体 + 收紧的软边读数最干净
+            star = _soft(star, 0.3)
+            im.alpha_composite(star, (int(w / 2 - star.width / 2),
+                                      int(h * 0.22 - star.height / 2)))
+            smoke_sprites.append([None] + [faded(im, a) for a in hat_fx.ALPHAS[1:]])
+        return dict(trail_dust=trail_dust, flies=flies, sigils=sigils,
+                    smoke_sprites=smoke_sprites,
+                    burst_start=cls._burst_steps(ps, GOLD_L, MAGIC_B, 1.0),
+                    burst_done=cls._burst_steps(ps, GOLD, GOLD_L, 1.25))
+
+    @staticmethod
+    def _burst_steps(ps, spike_rgb, dust_rgb, core_scale):
+        """B4 星爆 10 档复合贴图:白金芯 + 8 向金刺 + 6 颗环绕星尘。
+
+        ease-out 扩散、(1-u)^0.75 渐隐,峰值 alpha 0.90,整段一次烘完,
+        每帧只贴 1 张;默认档外接盒 ≤64px(2x),符合硬阈值 C4。"""
+        unit = ps / 1.6                      # 规格数值按默认 pixel_scale=1.6 标定
+        half = int(19.5 * unit) + 1
+        size = half * 2
+        steps = []
+        for i in range(10):
+            u = i / 9
+            e = 1 - (1 - u) ** 2
+            # FIX-3:旧曲线 (1-u)^0.75 在 u≈0.9 还剩 α≈0.16,降采样后是
+            # 一粒去饱和暖灰残影(RGB≈72,70,86);u>0.70 追加快速熄灭因子,
+            # u≥0.92 完全归零,末段不再留灰点
+            fade = (1 - u) ** 0.75
+            if u > 0.70:
+                fade *= max(0.0, 1.0 - (u - 0.70) / 0.22) ** 1.2
+            im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            c = size / 2
+            ring = (2.5 + 13.75 * e) * unit          # 尘环 4→26px
+            for kk in range(6):
+                a = math.tau * kk / 6 + 0.26
+                x0, y0 = c + math.cos(a) * ring, c + math.sin(a) * ring
+                pts = []
+                for j in range(8):
+                    rr = 2.2 * unit * (1 if j % 2 == 0 else 0.4)
+                    aa = a + math.pi / 4 + math.pi * j / 4
+                    pts.append((x0 + math.cos(aa) * rr, y0 + math.sin(aa) * rr))
+                d.polygon(pts, fill=dust_rgb + (int(235 * fade),))
+            ln = (3.1 + 9.4 * e) * unit              # 金刺 5→20px
+            for kk in range(8):
+                a = math.tau * kk / 8
+                d.line([c, c, c + math.cos(a) * ln, c + math.sin(a) * ln],
+                       fill=spike_rgb + (int(215 * fade),),
+                       width=max(1, int(1.2 * unit)))
+            layer = _soft(im, 0.45 * unit)
+            cr = (1.9 + 3.75 * e) * unit * core_scale  # 白金芯 3→9px(done 更大)
+            core = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            dc = ImageDraw.Draw(core)
+            dc.ellipse([c - cr, c - cr, c + cr, c + cr],
+                       fill=(255, 250, 240, int(210 * fade)))
+            cr2 = cr * 0.45
+            dc.ellipse([c - cr2, c - cr2, c + cr2, c + cr2],
+                       fill=(255, 253, 248, int(240 * fade)))
+            layer.alpha_composite(_soft(core, 0.3 * unit))
+            steps.append(layer)
+        return steps
+
+    # ---------- 接线 ----------
+    @classmethod
+    def upgrade(cls, instance, assets_dir):
+        """把 bake() 返回的 A1/A2 实例原位升级成 B 系列(同一对象换 __class__)。
+
+        B 素材烘焙失败(缺 PNG 等)时返回 False,实例原样保留 A1/A2 行为。"""
+        if type(instance) is hat_fx.HatFX:
+            tables = cls._bake_b(assets_dir, instance.scale)
+            if tables:
+                instance.__class__ = cls
+                instance.trail_dust = tables["trail_dust"]
+                instance.flies = tables["flies"]
+                instance.sigils = tables["sigils"]
+                instance.smoke_sprites = tables["smoke_sprites"]
+                instance.burst_start = tables["burst_start"]
+                instance.burst_done = tables["burst_done"]
+                cls._reset_state(instance)
+                return True
+        return False
+
+    @staticmethod
+    def _reset_state(inst):
+        """B 槽位重排:拖尾 12 槽(多存 2 个外漂方向分量)、烟 14 槽
+        (第 5 位存槽序号当螺旋相位)。就地换数字字段、不新建对象的
+        既有模式不变。"""
+        inst.trails = [[[0., 0., 0., -1e9, 0., 0.]
+                        for _ in range(HatFX2.TRAIL_SLOTS)] for _ in range(3)]
+        inst.heads = [0, 0, 0]
+        inst.sampled = [-1e9] * 3
+        inst.last_xy = [[0., 0.] for _ in range(3)]
+        inst.smoke = [[-1e9, 0., 0., 0., 0.] for _ in range(HatFX2.SMOKE_SLOTS)]
+        inst.next_smoke = 0.
+        inst.smoke_head = 0
+        inst.now = 0.
+        inst.fast = True
+        inst.thinking = False
+        inst.last_update = None
+        inst.energy = 0.        # B1 能量 E,由 pet.gain_star 每帧传入
+        inst.bursts = []        # 活动中的爆 [(kind, t0, x, y)],≤2
+        inst.round_t0 = None    # 本轮思考的开始时刻(≥2s 才算"完成")
+        inst.orbit_fit = None   # 轨道椭圆拟合 (cx, cy, a, b),微光用
+        inst.girl_box = None    # 立绘外接盒 (x0, y0, x1, y1) 2x 像素,萤火用
+        inst.tip = (0., 0.)
+
+    def clear(self):
+        super().clear()
+        self.bursts = []
+        self.round_t0 = None
+
+    # ---------- 每帧 ----------
+    def update(self, now, items, tip_x, tip_y, fast=True, moving=True,
+               energy=None, girl_box=None):
+        if self.last_update is not None and (now < self.last_update or now-self.last_update > 2):
+            self.clear()  # suspend/resume does not backfill a cloud
+        self.last_update = self.now = now
+        self.fast = bool(fast)
+        if energy is not None:
+            self.energy = max(0., min(1., float(energy)))
+        if girl_box is not None and len(girl_box) == 4:
+            self.girl_box = tuple(float(v) for v in girl_box)
+        self.tip = (tip_x, tip_y)
+        self._fit_path(items)
+        interval = .045 if self.fast else .075   # B1 采样 45ms/75ms(A1 是 75/125)
+        if moving:
+            cx=cy=0.;count=0
+            for name,x,y,depth,near,level in items:
+                if name=='path':
+                    cx+=x;cy+=y;count+=1
+            if not count:
+                for name,x,y,depth,near,level in items:
+                    if name in ('moon','crystal','planet'):
+                        cx+=x;cy+=y;count+=1
+            center_x=cx/max(1,count);center_y=cy/max(1,count)
+            for name,x,y,depth,near,level in items:
+                index = 0 if name=='moon' else 1 if name=='crystal' else 2 if name=='planet' else -1
+                if index<0 or now-self.sampled[index]<interval:
+                    continue
+                last=self.last_xy[index]
+                if self.sampled[index]>0 and math.hypot(x-last[0],y-last[1])>28*self.scale:
+                    for slot in self.trails[index]:slot[3]=-1e9
+                self.last_xy[index][0]=x;self.last_xy[index][1]=y
+                slot=self.trails[index][self.heads[index]]
+                dx,dy=x-center_x,y-center_y;length=max(1.,math.hypot(dx,dy))
+                # 存轨道采样点 + 单位外向(不朝脸);外漂幅度在 draw 侧呼吸
+                slot[0]=x;slot[1]=y
+                slot[2]=depth;slot[3]=now
+                slot[4]=dx/length;slot[5]=dy/length
+                self.heads[index]=(self.heads[index]+1)%self.TRAIL_SLOTS
+                self.sampled[index]=now
+
+    def _fit_path(self, items):
+        """从轨道虚点拟合帽檐椭圆(屏幕 2x 像素,倾角固定 27° 同帽檐)。"""
+        sx=sy=n=0;pts=[]
+        for name,x,y,depth,near,level in items:
+            if name=='path':
+                sx+=x;sy+=y;n+=1;pts.append((x,y))
+        if not n:
+            return
+        cx=sx/n;cy=sy/n;ct,st=self.CT27,self.ST27
+        a=b=0.
+        for x,y in pts:
+            u=(x-cx)*ct+(y-cy)*st;v=-(x-cx)*st+(y-cy)*ct
+            a=max(a,abs(u));b=max(b,abs(v))
+        if a>1.:
+            self.orbit_fit=(cx,cy,a,b)
+
+    def set_thinking(self, now, active, tip_x, tip_y):
+        active=bool(active)
+        was=self.thinking
+        if active and not was:
+            # B4 起爆:思考开始边沿的金紫星爆
+            self.round_t0=now
+            self.bursts=[b for b in self.bursts if now-b[1]<0.8]
+            self.bursts.append(("start",now,tip_x,tip_y))
+            del self.bursts[:-2]
+        elif not active and was:
+            # B4 完成爆(暖白金)+ B5 薄荷环爆(+0.15s 错峰)。完成态没有独立
+            # 信号,这里用 ai_thinking 的下降沿近似"AI 完成",并要求本轮
+            # ≥2s 才算完成(任务交接已注明该近似性)。
+            dur=now-(self.round_t0 if self.round_t0 is not None else now)
+            self.round_t0=None
+            if dur>=2.0:
+                self.bursts=[b for b in self.bursts if now-b[1]<0.8]
+                self.bursts.append(("done",now,tip_x,tip_y))
+                self.bursts.append(("mint",now+0.15,tip_x,tip_y))
+                del self.bursts[:-2]
+        if not active:
+            self.thinking=False;self.next_smoke=now
+            return
+        if not self.thinking:
+            self.next_smoke=now
+        self.thinking=True
+        if now<self.next_smoke:
+            return
+        slot=self.smoke[self.smoke_head]
+        ordinal=self.smoke_head
+        slot[0]=now;slot[1]=tip_x;slot[2]=tip_y
+        slot[3]=math.sin(ordinal*2.4)*1.5*self.scale
+        slot[4]=ordinal                       # 螺旋相位 = 槽序号 ×0.55 rad
+        self.smoke_head=(ordinal+1)%self.SMOKE_SLOTS
+        self.next_smoke=now+(1/7 if self.fast else 1/4)   # B2 发射 7/s / 4/s
+
+    @staticmethod
+    def _trail_base(frac):
+        """B1 沿程 alpha 基线:头 30% 0.95→0.78,中 40% 0.62→0.48,
+        尾 30% 0.34→0.22(验收表 #5 的三条带)。"""
+        if frac<=.30:
+            return .95-.17*(frac/.30)
+        if frac<=.70:
+            return .62-.14*((frac-.30)/.40)
+        return .34-.12*min(1.,(frac-.70)/.30)
+
+    def _fly_ellipse(self):
+        """萤火椭圆(2x 像素):绕肩线,rx=0.62×立绘宽,ry=0.5rx,倾角 27°。
+
+        优先用 pet 挂点传来的立绘外接盒;拿不到(离线工具)时用轨道拟合
+        反推 —— 730/380 与 0.05/0.047 是 pet.py HAT_ORBIT 布局常量的既定
+        比例,近似值只影响留白区里的位置,萤火画在剪影后层无压脸风险。
+        挂点传的是含透明边的精灵外接盒,规格的 rx 按 α 包围盒宽定义,
+        实测盒比 ≈0.73~0.8,这里乘 0.78 校准(离线实测同系数)。"""
+        g=self.girl_box
+        if g:
+            cx=(g[0]+g[2])*.5;top=g[1]
+            w=max(1.,g[2]-g[0])*0.78;h=max(1.,g[3]-g[1])*0.78
+        else:
+            fit=self.orbit_fit
+            if not fit:
+                return None
+            w=fit[2]*730.0/380.0
+            h=w*1.31
+            cx=fit[0]-.05*w
+            top=fit[1]+.047*h-0.30*h
+        rx=.62*w
+        return cx,top+.30*h,rx,.5*rx
+
+    def draw(self, frame):
+        """B1~B5:只贴预烘焙精灵 + 少量矢量线,全部画在人物剪影后层。"""
+        now=self.now;ps=self.scale
+        keep=min(self.TRAIL_SLOTS,(8+round(4*self.energy)) if self.fast else 8)
+        glow=0.8+0.2*self.energy
+        life=self.TRAIL_LIFE
+        ops=[];segs=[]
+        for index,track in enumerate(self.trails):
+            head=self.heads[index]
+            amp=12*(1+0.35*math.sin(math.tau*now/1.7+index*2.09))*ps
+            previous=None
+            for offset in range(keep-1,-1,-1):
+                slot=track[(head-1-offset)%self.TRAIL_SLOTS]
+                age=now-slot[3]
+                if not 0<=age<life:
+                    previous=None
+                    continue
+                fade=1. if age<.6 else max(0.,1-(age-.6)/.55)
+                # FIX-1:头三槽沿外漂方向再推离天体本体(头槽采样点原在天体
+                # 质心上,会被天体精灵部分遮挡),offset≥3 后归零不影响带形
+                push=10.0*ps*max(0.0,1.0-offset/3.0)
+                x=slot[0]+slot[4]*(amp+push);y=slot[1]+slot[5]*(amp+push)
+                frac=offset/max(1,keep-1)
+                ai=_alpha_idx(self._trail_base(frac)*fade*glow)
+                if ai:
+                    # FIX-1:金段 30%→36%,把金系份额顶进 35~55% 验收带
+                    table=self.trail_dust[0 if frac<.36 else 1 if frac<.68 else 2]
+                    ops.append((table[ai],x,y))
+                if previous is not None and math.hypot(x-previous[0],y-previous[1])<=40*ps:
+                    segs.append((previous[:2],(x,y),min(previous[2],fade)))
+                previous=(x,y,fade)
+        if segs:
+            # 相邻槽间两层描边线:紫垫层 → 金主线,点阵连成光带
+            # (FIX-1:主线加宽到 2px(2x)、α90→115,BILINEAR 降采样后仍可见)
+            d=ImageDraw.Draw(frame,"RGBA")
+            for a,b,f in segs:
+                d.line([a,b],fill=MAGIC_B+(int(55*f*glow),),width=max(2,int(1.9*ps)))
+            for a,b,f in segs:
+                d.line([a,b],fill=GOLD_L+(int(115*f*glow),),width=max(2,int(1.2*ps)))
+        for sp,x,y in ops:
+            self._paste(frame,sp,x,y)
+        smoke_life=self.SMOKE_LIFE
+        for slot in self.smoke:
+            age=now-slot[0]
+            if not 0<=age<smoke_life:
+                continue
+            stage=min(3,int(age/smoke_life*4))          # 成长:核先亮→晕展开
+            level=(min(1.,age/.15)
+                   *(1. if age<smoke_life*2/3
+                     else max(0.,(smoke_life-age)/(smoke_life/3)))*.78)
+            ai=_alpha_idx(level)
+            sprite=self.smoke_sprites[stage][ai] if ai else None
+            if sprite is None:
+                continue
+            # 整个精灵(含烘焙晕)起于帽尖上方;上升 22×scale px/s,全程≈45px(2x)
+            y=slot[2]-3*ps-sprite.height/2-age*22*ps
+            x=slot[1]+slot[3]+math.sin(age*math.tau*1.6+slot[4]*.55)*3.0*ps
+            self._paste(frame,sprite,x,y)
+        fit=self.orbit_fit
+        if fit is not None:
+            # B3 符文微光:沿帽檐椭圆 6 个固定刻度,0.05 rad/s 慢转(与星轨反向),
+            # 只出现在远侧(sin<0),与近脸侧永久隔离;alpha 0.14~0.20 极淡
+            cx,cy,a,b=fit
+            spin=-0.05*now
+            for i in range(6):
+                ang=spin+math.tau*i/6
+                sn=math.sin(ang)
+                if sn>=0:
+                    continue
+                lx,ly=a*math.cos(ang),b*sn
+                X=cx+lx*self.CT27-ly*self.ST27
+                Y=cy+lx*self.ST27+ly*self.CT27
+                level=0.17+0.03*math.sin(math.tau*now/6+i*1.05)
+                j=max(0,min(3,int(round((level-0.14)/0.02))))
+                self._paste(frame,self.sigils[i][j],X,Y)
+        ell=self._fly_ellipse()
+        if ell is not None:
+            # B3 萤火:2 紫 + 1 金,周期 14/19/26s 错相,亮度呼吸 2.8s,
+            # alpha 0.22~0.55(FIX-2:上限 0.45→0.55,真机扫一眼可感);
+            # 画在剪影后层,被身体自然遮挡,不可能压脸
+            fcx,fcy,rx,ry=ell
+            for i,(period,phase) in enumerate(((14.,0.),(19.,2.1),(26.,4.2))):
+                ang=math.tau*now/period+phase
+                lx,ly=rx*math.cos(ang),ry*math.sin(ang)
+                X=fcx+lx*self.CT27-ly*self.ST27
+                Y=fcy+lx*self.ST27+ly*self.CT27
+                level=0.22+0.33*(0.5+0.5*math.sin(math.tau*now/2.8+i*1.3))
+                j=max(0,min(3,int(round((level-0.22)/0.11))))
+                self._paste(frame,self.flies[i][j],X,Y)
+        for kind,t0,x,y in self.bursts:
+            # B4/B5 星爆:爆心压在帽尖上方(≤ tip−6px 2x),后层绘制
+            life_b=0.55 if kind=="mint" else 0.75
+            age=now-t0
+            if not 0<=age<life_b:
+                continue
+            if kind=="mint":
+                md=getattr(self,"mint_draw",None)
+                if md:
+                    md(frame,x,y-4.0*ps,age/life_b)   # B5 复用 fx.hit_ring
+            else:
+                steps=self.burst_start if kind=="start" else self.burst_done
+                self._paste(frame,steps[min(9,int(age/life_b*10))],x,y-4.0*ps)
+
+    def stats(self):
+        # trail 只数 draw 实际会贴的槽(keep = 8+4E,规格账本 24~36),
+        # 不是寿命内的全部槽位
+        keep=min(self.TRAIL_SLOTS,(8+round(4*self.energy)) if self.fast else 8)
+        trail=0
+        for index,track in enumerate(self.trails):
+            head=self.heads[index]
+            for offset in range(keep):
+                slot=track[(head-1-offset)%self.TRAIL_SLOTS]
+                if 0<=self.now-slot[3]<self.TRAIL_LIFE:
+                    trail+=1
+        smoke=sum(0<=self.now-s[0]<self.SMOKE_LIFE for s in self.smoke)
+        bursts=sum(0<=self.now-b[1]<(0.55 if b[0]=="mint" else 0.75)
+                   for b in self.bursts)
+        return dict(trail=trail,smoke=smoke,flies=3,sigils=6,bodies=3,bursts=bursts,
+                    total=trail+smoke+bursts+12,cap=self.CAP,
+                    thinking=self.thinking,quality='full' if self.fast else 'reduced')
+
+
 class FX:
     """所有预渲染资源的持有者。缩放变了就整个重建(和 rebuild_scale_cache 同步)。"""
 
     SIGILS = 16          # 地面法阵上的符文个数
     ALPHA_STEPS = 6      # 呼吸/淡入淡出用几档预渲染的透明度
 
-    def __init__(self, scale, ss):
+    def __init__(self, scale, ss, defer=False, assets_dir=None):
+        """defer=True:只建待机首帧就要用的精灵,互动/动作才用到的留给
+        build_deferred()(桌宠在后台线程里调)。实测 Pet() 构造里 FX 建图占
+        300~400ms,其中冲击波、命中光环、喷气团、冥想星核开机那一刻都用不上。
+        没建好之前对应的绘制方法什么都不画。"""
         self.scale = scale
         self.ss = ss
+        self._hat_assets = assets_dir
         self._circle_time = None
         self._orbit_spin = 0.0
         self._bead_spin = 0.0
+        self._deferred_lock = threading.Lock()
         self.build()
+        if not defer:
+            self.build_deferred()
 
     # ---------- 预渲染 ----------
     def build(self):
@@ -312,14 +929,62 @@ class FX:
         # 预合成一次,运行时只贴一次;叠放顺序与原来一致(光垫在最底)。
         self.ground_static = _merge_mask_layers(
             [self.core, self.ring_out, self.ring_out2, self.ring_mid, self.ring_in])
-        # 冲击波:三档强度 × 16 帧扩散与渐隐,运行时只挑贴图。
-        self._shock_sets = [
-            [_ring_sprite(rx * (.25 + i / 15) * strength,
-                          max(1.0, 3.0 - 2.0 * i / 15) * k,
-                          MAGIC_B, int(210 * (1 - i / 15) ** .8), ratio=.26)
-             for i in range(16)] for strength in (.5, .75, 1.0)]
-        self.shock = self._shock_sets[-1]
         self._build_living()
+        from hat_fx import bake
+        self.hat = bake(self._hat_assets, s*k)
+        if self.hat is not None:
+            # B5 完成环爆复用 fx.hit_ring 的命中环通道(hit 表新增 "mint" 档,
+            # 薄荷绿 = 完成);后台还没建好 hit 表时 hit_ring 会自动跳过。
+            self.hat.mint_draw = lambda fr, x, y, p, _fx=self: \
+                _fx.hit_ring(fr, x, y, p, "mint")
+            # B1~B5 原位升级 bake 返回的同一实例(对象身份被 test_hat_fx
+            # 锁定,只能换 __class__ 不能换对象);B 素材不全时 upgrade 返回
+            # False,留在现 A1/A2 行为(规格 C5 降级链)。
+            HatFX2.upgrade(self.hat, self._hat_assets)
+
+    def build_core_feedback(self):
+        """Only the small touch/feed rings; no shock, puffs or meditation cache."""
+        with self._deferred_lock:
+            if getattr(self, "hit", None) is not None:
+                return
+            self.hit = {name: [_hit_sprite(i / (self.HIT_STEPS - 1), self.scale * self.ss, rgb)
+                               for i in range(self.HIT_STEPS)]
+                        for name, rgb in (("gold", GOLD_L), ("pink", (255, 188, 222)),
+                                          ("mint", (150, 238, 206)))}  # mint: B5 完成环爆
+
+    def build_deferred(self):
+        """互动/动作才用的精灵。可重复调用、线程安全;每组建完整才挂上属性,
+        帧循环读到的要么是完整的一组,要么是没有。"""
+        with self._deferred_lock:
+            if getattr(self, "_deferred_done", False):
+                return
+            s, k, rx = self.scale, self.ss, self.rx
+            # 冲击波:三档强度 × 16 帧扩散与渐隐,运行时只挑贴图。
+            shock_sets = [
+                [_ring_sprite(rx * (.25 + i / 15) * strength,
+                              max(1.0, 3.0 - 2.0 * i / 15) * k,
+                              MAGIC_B, int(210 * (1 - i / 15) ** .8), ratio=.26)
+                 for i in range(16)] for strength in (.5, .75, 1.0)]
+            self.shock = shock_sets[-1]
+            self._shock_sets = shock_sets
+            # 命中光环:点中处先炸一下亮芯和四角星芒,随后一圈环向外扩散变淡。
+            # 立着的正圆(命中点在半空),两套配色:金=接星/喂糖/挠痒,粉=摸头。
+            # 粉色要偏亮:深粉在低透明度的尾段压在深色底上会发灰发棕。
+            self.hit = {name: [_hit_sprite(i / (self.HIT_STEPS - 1), s * k, rgb)
+                               for i in range(self.HIT_STEPS)]
+                        for name, rgb in (("gold", GOLD_L), ("pink", (255, 188, 222)),
+                                          ("mint", (150, 238, 206)))}  # mint: B5 完成环爆
+            self.puff = [_puff_sprite(i / (self.PUFF_STEPS - 1), s * k)
+                         for i in range(self.PUFF_STEPS)]
+            # 冥想星核:近侧大而亮(画在她身前),远侧小而暗(画在她身后),
+            # 环绕才有纵深。
+            orb_near = _orb_sprite(22 * s * k, GOLD_L)
+            orb_far = _orb_sprite(14 * s * k, MAGIC_A)
+            self.orbs = {"near": [_alpha_scaled(orb_near, (i + 1) / self.ORB_STEPS)
+                                  for i in range(self.ORB_STEPS)],
+                         "far": [_alpha_scaled(orb_far, 0.55 * (i + 1) / self.ORB_STEPS)
+                                 for i in range(self.ORB_STEPS)]}
+            self._deferred_done = True
 
     # 下面几组都是"让她动起来"的贴图:原先待机时法阵除了符文匀速转,亮度
     # 是死的;摸头/接星只有飘走的粒子,点中的那一下没有落点;冥想的环绕
@@ -328,6 +993,9 @@ class FX:
     RIPPLE_STEPS = 14    # 法阵光纹从内圈荡到外圈的半径档
     HIT_STEPS = 10       # 命中光环的扩散档
     ORB_STEPS = 4        # 冥想星核的淡入淡出档
+    PUFF_STEPS = 9       # 喷气团(喷嚏/撞墙)鼓起到化开
+    ORBIT_DEPTH = 6      # 帽檐轨道天体:远->近的大小/亮度档
+    ORBIT_DOT_STEPS = 4  # 轨迹点的透明度档
 
     def _build_living(self):
         s, k, rx = self.scale, self.ss, self.rx
@@ -349,20 +1017,25 @@ class FX:
                                     int(225 * (1 - i / (n - 1)) ** 0.8) + 10,
                                     ratio=0.26)
                        for i in range(n)]
-        # 命中光环:点中处先炸一下亮芯和四角星芒,随后一圈环向外扩散变淡。
-        # 立着的正圆(命中点在半空),两套配色:金=接星/喂糖/挠痒,粉=摸头。
-        # 粉色要偏亮:深粉在低透明度的尾段压在深色底上会发灰发棕。
-        self.hit = {name: [_hit_sprite(i / (self.HIT_STEPS - 1), s * k, rgb)
-                           for i in range(self.HIT_STEPS)]
-                    for name, rgb in (("gold", GOLD_L), ("pink", (255, 188, 222)))}
-        # 冥想星核:近侧大而亮(画在她身前),远侧小而暗(画在她身后),
-        # 环绕才有纵深。
-        orb_near = _orb_sprite(22 * s * k, GOLD_L)
-        orb_far = _orb_sprite(14 * s * k, MAGIC_A)
-        self.orbs = {"near": [_alpha_scaled(orb_near, (i + 1) / self.ORB_STEPS)
-                              for i in range(self.ORB_STEPS)],
-                     "far": [_alpha_scaled(orb_far, 0.55 * (i + 1) / self.ORB_STEPS)
-                             for i in range(self.ORB_STEPS)]}
+        # 帽檐轨道上的三颗小天体。远近只差大小和亮度,预先按 6 档缩放好:
+        # 每帧只挑一档贴,不在帧循环里缩放
+        self.orbit = {}
+        # 第一版按 1 倍画,实际窗口里行星 20px、弯月 12px,旁边原画的绿星有
+        # 70px,看着像灰尘不像行星 —— 放大到约两倍
+        for name, maker in (("planet", _planet_sprite), ("moon", _moon_sprite),
+                            ("crystal", _crystal_sprite)):
+            base = maker(s * k * 1.9)
+            steps = []
+            for i in range(self.ORBIT_DEPTH):
+                d = i / (self.ORBIT_DEPTH - 1)
+                f = 0.62 + 0.38 * d
+                im = base.resize((max(2, int(base.width * f)), max(2, int(base.height * f))),
+                                 Image.LANCZOS)
+                steps.append(_alpha_scaled(im, 0.5 + 0.5 * d))
+            self.orbit[name] = steps
+        dot = _dot_sprite(1.9 * s * k, (236, 230, 255), 240)
+        self.orbit_dots = [_alpha_scaled(dot, (i + 1) / self.ORBIT_DOT_STEPS * 0.8)
+                           for i in range(self.ORBIT_DOT_STEPS)]
 
     # ---------- 每帧 ----------
     def ground_circle(self, frame, d, cx, cy, t, energy=0.0, breath=None):
@@ -462,22 +1135,42 @@ class FX:
             self._paste_c(frame, self.ripple[int(p * self.RIPPLE_STEPS)], cx, cy)
 
     def hit_ring(self, frame, cx, cy, p, palette="gold"):
-        if 0 <= p < 1:
-            sprites = self.hit.get(palette) or self.hit["gold"]
+        hit = getattr(self, "hit", None)       # 后台还没建好就先不画
+        if hit and 0 <= p < 1:
+            sprites = hit.get(palette) or hit["gold"]
             self._paste_c(frame, sprites[int(p * self.HIT_STEPS)], cx, cy)
+
+    def orbit_body(self, frame, cx, cy, name, depth):
+        """帽檐轨道天体。depth 0(最远)..1(最近)。"""
+        steps = self.orbit.get(name)
+        if steps:
+            i = int(max(0.0, min(1.0, depth)) * (self.ORBIT_DEPTH - 1) + 0.5)
+            self._paste_c(frame, steps[i], cx, cy)
+
+    def orbit_dot(self, frame, cx, cy, level):
+        """轨迹点,level 0..1。"""
+        i = int(max(0.0, min(1.0, level)) * self.ORBIT_DOT_STEPS) - 1
+        if i >= 0:
+            self._paste_c(frame, self.orbit_dots[min(i, self.ORBIT_DOT_STEPS - 1)], cx, cy)
+
+    def puff_at(self, frame, cx, cy, p):
+        if getattr(self, "puff", None) and 0 <= p < 1:
+            self._paste_c(frame, self.puff[int(p * self.PUFF_STEPS)], cx, cy)
 
     def orb(self, frame, cx, cy, side, vis):
         """冥想星核。vis 0..1 是淡入淡出系数,太暗就不贴。"""
         i = int(max(0.0, min(1.0, vis)) * self.ORB_STEPS) - 1
-        if i >= 0:
-            self._paste_c(frame, self.orbs[side][min(i, self.ORB_STEPS - 1)], cx, cy)
+        orbs = getattr(self, "orbs", None)
+        if orbs and i >= 0:
+            self._paste_c(frame, orbs[side][min(i, self.ORB_STEPS - 1)], cx, cy)
 
     def shockwave(self, frame, cx, cy, p, strength=1.0):
         """扩散同时淡出;强弱只影响半径,不再把消失时间截在半途。"""
-        if not 0 <= p < 1:
+        sets = getattr(self, "_shock_sets", None)
+        if not sets or not 0 <= p < 1:
             return
         band = max(0, min(2, round(strength * 2)))
-        sprites = self._shock_sets[band]
+        sprites = sets[band]
         i = min(len(sprites) - 1, int(p * len(sprites)))
         self._paste_c(frame, sprites[i], cx, cy)
 

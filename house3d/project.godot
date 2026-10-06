@@ -1,0 +1,25 @@
+; Engine configuration file.
+; 小乔 3D 小屋试验(I-25) — 透明置顶无边框窗口,紧凑尺寸不挡视野
+
+config_version=5
+
+[application]
+
+config/name="小乔3D小屋"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+
+[display]
+
+window/size/viewport_width=560
+window/size/viewport_height=500
+window/size/borderless=true
+window/size/resizable=false
+window/size/transparent=true
+window/size/always_on_top=true
+window/dpi/allow_dpi_hidpi=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

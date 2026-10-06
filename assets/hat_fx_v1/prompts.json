@@ -1,0 +1,30 @@
+{
+  "tool": "built-in image_gen",
+  "assets": [
+    [
+      "dust-gold",
+      "A single tiny four-point star-dust speck, creamy warm gold center, short delicate pointed rays, restrained pale lilac halo."
+    ],
+    [
+      "dust-lilac",
+      "A single tiny faceted four-point star-dust speck, pale lavender with an ivory core, restrained translucent violet halo."
+    ],
+    [
+      "dust-blue",
+      "A single tiny icy blue diamond star-dust speck, short four-point silhouette with a restrained faint blue halo."
+    ],
+    [
+      "dust-mote",
+      "A single tiny round warm ivory star-dust mote, slightly irregular hand-painted center and a restrained lavender halo, no long rays."
+    ],
+    [
+      "smoke-lilac",
+      "A single small airy tapering violet star-smoke wisp, vertically rising curl, lavender translucent vapor with one subtle ivory star embedded near the tip; not a cloud or explosion."
+    ],
+    [
+      "smoke-blue",
+      "A single small airy tapering periwinkle star-smoke wisp, vertically rising S curl, cool blue-lavender translucent vapor with one subtle tiny gold speck near its tip; not a cloud or explosion."
+    ]
+  ],
+  "style": "hand-painted anime mobile-game cosmetic VFX, lavender/ivory/warm gold/icy blue; one isolated sprite, restrained baked halo, actual transparent background"
+}

@@ -86,10 +86,15 @@ def check(name, cond):
 
 
 def main():
+    print("Retired engine compatibility suite; shipped core profile is checked separately.")
     sandbox = _sandbox_runtime_files()   # 必须在构造 Pet 之前
     root = tk.Tk()
     # 不 withdraw:重力/下落测试需要完整的 tick 渲染管线在跑
-    p = pet.Pet(root)
+    # The live constructor normally loads/migrates AI credentials. Tests must
+    # disable that backend before construction, not only later in _run().
+    with patch("ai_chat.AIBrain", return_value=None):
+        p = pet.Pet(root)
+    p._core_edition = False  # Explicit retired-engine compatibility fixture.
     p.chat_path = os.path.join(sandbox, "chat_history.json")
     p.state_path = os.path.join(sandbox, "pet_state.json")
     try:
@@ -292,6 +297,27 @@ def _run(p, root=None):
     check("帧率: 有演出粒子在飞给 60fps", p._frame_delay() == 16)
     p._fast_ok = False
     check("帧率: 机器画不动时退回 30fps", p._frame_delay() == 33)
+    p._fast_ok = True
+    # 没人要求的氛围彩蛋不该抢 60fps 档:哼歌的音符每帧才走 1.6px,
+    # 夜间流星快但只是窗外的背景。反过来,主人自己点的唱歌/跳舞要保住
+    # 60fps —— 档位跟"谁要求的"走,不跟粒子走(E39)。
+    def _one_part(kind, life=9.0):
+        p.parts = [dict(kind=kind, x=0, y=0, vx=0, vy=-30, born=time.time(),
+                        life=life, size=6, color=(255, 233, 160), phase=0.0,
+                        spin=0.0, grav=0.0, txt="♪")]
+
+    _one_part("note")
+    check("帧率: 待机哼歌的音符不打破安静档", p._frame_delay() == 50)
+    p.singing = True
+    check("帧率: 主人点的唱歌仍然 60fps", p._frame_delay() == 16)
+    p.singing = False
+    p.state = "dance"
+    check("帧率: 跳舞仍然 60fps", p._frame_delay() == 16)
+    p.state = "idle"
+    _one_part("meteor")
+    check("帧率: 夜间流星走 30fps(既不抢 60 也不算静止)", p._frame_delay() == 33)
+    p.parts = []
+    check("帧率: 氛围彩蛋结束后回到安静档", p._frame_delay() == 50)
     # 专注陪伴:她安静待着,而且陪伴演出只用氛围粒子 —— 所以这段时间
     # 反而比平时更容易落到 20fps 省电档。这条一旦挂了,多半是有人把
     # 陪伴特效换成了 heart/confetti(那会把档位顶到 60fps)。
@@ -363,6 +389,10 @@ def _run(p, root=None):
     # 清醒撒娇必须在地面安静待机;前面的随机事件可能留下行走/落地位置。
     p.fy = p.ground_feet
     p.next_event = time.time() + 9999
+    # 清醒撒娇要求 state 停在 idle;"秋千是家"的自动回座会把 idle 抢成
+    # swing(沙盒里 swing_scene 有真实保存值时 start_swing 会成功),先关掉。
+    p.swing_home = False
+    p._swing_remount = time.time() + 9999
     p.next_whine = 0.0; p.bubble = None; p.state = "idle"
     p.last_interact = time.time() - 2000
     p._tick_body()
@@ -831,9 +861,13 @@ def _run(p, root=None):
     p.fy = float(p.ground_feet)
     p.eat_candy()
     p.eat_start -= 1.15                     # 刚过 1.1 秒的进嘴拍
+    p.next_ambient = time.time() + 999      # 环境星光也是 sparkle,别混进计数
     _t_eat = time.time()
     p._tick_body()
     _crumbs = [q for q in p.parts if q["kind"] == "sparkle" and q["born"] >= _t_eat]
+    # 第二帧前把时钟拨回同一拍:两帧真实耗时加起来超过 90ms 时,原来会合法地
+    # 跨进 1.24 秒的下一口咀嚼、多崩 2 粒,用例偶发失败(和"重放"无关)
+    p.eat_start = time.time() - 1.15
     p._tick_body()
     _again = [q for q in p.parts if q["kind"] == "sparkle" and q["born"] >= _t_eat]
     check(f"吃糖: 进嘴迸金屑且不重放(首拍 {len(_crumbs)} / 再跑一帧 {len(_again)})",
@@ -1071,6 +1105,459 @@ def _run(p, root=None):
     p._drag_trail = []
     p.on_release(_NS(x=_px, y=_py, x_root=_ev.x_root + 20, y_root=_ev.y_root))
     check("抓取光环: 松手后结束拖拽", p.drag is None)
+    _quiet_reset()
+
+    # ---- 32~35 动态感第三批(E29~E31) ----
+    # 32. 撞墙喷气团:落在撞击那一侧的轮廓外、往外鼓;不带方向的老调用不喷
+    _quiet_reset()
+    p.hit_wall((-1, 0))
+    _pf = [q for q in p.parts if q["kind"] == "puff"]
+    check(f"喷气团: 撞左墙喷在左侧轮廓外、往左鼓({[(round(q['x']), round(q['vx'])) for q in _pf]})",
+          len(_pf) == 1 and abs(_pf[0]["x"] - (p.W / 2 - 0.40 * p.W)) < 1 and _pf[0]["vx"] < 0)
+    _quiet_reset()
+    p.hit_wall()
+    check("喷气团: 不传方向时和原来一样不喷", not any(q["kind"] == "puff" for q in p.parts))
+    _quiet_reset()
+    p.hit_wall((0, 1))
+    check("喷气团: 在场时算演出给 60fps", p._frame_delay() == 16)
+    for _q in p.parts:
+        _q["born"] -= 5
+    _tick_quiet()
+    check("喷气团: 寿命到后清掉,回到 20fps 安静档",
+          not any(q["kind"] == "puff" for q in p.parts) and p._frame_delay() == 50)
+
+    # 33. 喷嚏:"嚏"的那一拍从嘴前喷一团气
+    _quiet_reset()
+    p.start_sneeze()
+    p.sneeze_start -= 0.93
+    _t_sn = time.time()
+    p.last = time.time() - 0.033
+    p._tick_body()
+    _sp = [q for q in p.parts if q["kind"] == "puff" and q["born"] >= _t_sn]
+    _mx = p._mouth_xy[0]
+    check(f"喷嚏: 嚏的那一下从嘴前喷气({len(_sp)})",
+          len(_sp) == 1 and _sp[0]["x"] > _mx - 1 and _sp[0]["vx"] > 0)
+    _quiet_reset()
+
+    # 34. 落地冲击:抛飞重落地、松手轻落地都登记冲击波,强度随速度
+    _quiet_reset()
+    p.state = "fly"
+    p.x = (p.x_min + p.x_max) / 2
+    p.fy = float(p.ground_feet) - 2
+    p.vx, p.vy = 0.0, 1000.0
+    p.bounces = 9
+    p.next_trail = time.time() + 99
+    p.last = time.time() - 0.02
+    p._tick_body()
+    _hard = [s["strength"] for s in p._shocks]
+    # 弹过 3 次以上落地会接着"头晕",所以只要求已经不在飞
+    check(f"落地冲击: 抛飞重落地冲击波强({_hard}, {p.state})",
+          p.state != "fly" and len(_hard) == 1 and _hard[0] > 0.85)
+    _quiet_reset()
+    p.state = "fall"
+    # 离地 0.1px:下落速度上限只有 120px/s,离地 1px 一帧落不到地
+    p.fy = float(p.ground_feet) - 0.1
+    p.vy = 20.0
+    p.bounces = 0
+    p.last = time.time() - 0.02
+    p._tick_body()
+    _soft = [s["strength"] for s in p._shocks]
+    check(f"落地冲击: 松手轻落地最弱一档({_soft})",
+          p.state == "idle" and _soft == [0.35])
+    _quiet_reset()
+    p.vx = p.vy = 0.0
+
+    # 35. 速度线:只在飞行时画,且只画在立绘之前
+    _quiet_reset()
+    _sl = []
+    p._draw_speed_lines = lambda d, cx, cy, k, now: _sl.append(p.state)
+    try:
+        p.state = "fly"
+        p.vx, p.vy = -1200.0, -600.0
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        p.state = "idle"
+        p.vx = p.vy = 0.0
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check(f"速度线: 飞行帧画、待机帧不画({_sl})", _sl == ["fly"])
+    finally:
+        del p._draw_speed_lines
+    _quiet_reset()
+
+    # ---- 36~39 第四批:特效位置与时停 ----
+    # 36. 源码防线:star_burst / hearts / confetti_burst 的 rx, ry 是像素偏移。
+    # 曾有 47 处写成 W/H 的比例(0.22、-0.28…),全部挤在画布正中:时停的
+    # 三层悬浮星光叠成一层,落地星星从脸上迸出来。字面量比例一出现就 FAIL。
+    import ast as _ast
+    _src = open(pet.__file__, encoding="utf-8").read()
+    _bad = []
+    for _node in _ast.walk(_ast.parse(_src)):
+        if (isinstance(_node, _ast.Call) and isinstance(_node.func, _ast.Attribute)
+                and _node.func.attr in ("star_burst", "hearts", "confetti_burst")):
+            for _arg in _node.args[:2]:
+                # 乘了 W/H 或减了半宽的是算术表达式(BinOp),本来就是像素;
+                # 其余(裸常量、random.uniform(-.3, .3) 这类)整棵子树里只要
+                # 出现 0~1 的小数就算写成了比例 —— 旧代码里有两处就是后者
+                if isinstance(_arg, _ast.BinOp):
+                    continue
+                # *self._click_rel(-0.14):_click_rel 自己把比例换算成像素
+                if any(isinstance(_c, _ast.Attribute) and _c.attr == "_click_rel"
+                       for _c in _ast.walk(_arg)):
+                    continue
+                for _v in _ast.walk(_arg):
+                    if isinstance(_v, _ast.Constant) and isinstance(_v.value, float) \
+                            and 0 < abs(_v.value) < 1:
+                        _bad.append(_node.lineno)
+    check(f"位置防线: 特效坐标没有裸写的比例 {sorted(set(_bad)) or ''}", not _bad)
+
+    # ---- 36b. 素材名防线:play_emotion 的类别、sfx.play 的音效名写错不会报错,
+    # 只会静默没反应。E3 踩过一次(throw 用了不存在的 "shocked"),挥手用
+    # "hello"(真名 greet)又坏了很久 —— 这里从源码抽出所有字面量名字比对素材。
+    _emo_keys = set(json.load(open(os.path.join(pet.ASSETS, "emotions.json"),
+                                   encoding="utf-8")).keys())
+    _sfx_keys = set(pet.SFX_FILES.keys())
+    def _names_in(_a):
+        """从实参里挑出真的会被当成素材名用的字面量。
+
+        不能直接 walk 整棵子树:cmd.get("category", "happy") 里的 "category"
+        是键名、random.choice(("a","b")) 里每个元素才是名字,一视同仁就会误报。
+        认不出来的形态(变量、下标、f-string)一律放过,防线只管字面量。
+        """
+        if isinstance(_a, _ast.Constant):
+            return [_a.value] if isinstance(_a.value, str) else []
+        if isinstance(_a, _ast.Call):
+            if isinstance(_a.func, _ast.Attribute) and _a.func.attr == "get":
+                return _names_in(_a.args[1]) if len(_a.args) > 1 else []
+            return [n for _x in _a.args for n in _names_in(_x)]   # str(...) 这类包一层
+        if isinstance(_a, (_ast.List, _ast.Tuple, _ast.Set)):
+            return [n for _e in _a.elts for n in _names_in(_e)]
+        if isinstance(_a, _ast.IfExp):
+            return _names_in(_a.body) + _names_in(_a.orelse)
+        return []
+
+    _bad_name = []
+    for _node in _ast.walk(_ast.parse(_src)):
+        if not (isinstance(_node, _ast.Call) and isinstance(_node.func, _ast.Attribute)
+                and _node.args):
+            continue
+        if _node.func.attr == "play_emotion":
+            _pool, _keys = "表情", _emo_keys
+        elif (_node.func.attr == "play" and isinstance(_node.func.value, _ast.Attribute)
+                and _node.func.value.attr == "sfx"):
+            _pool, _keys = "音效", _sfx_keys
+        else:
+            continue
+        for _name in _names_in(_node.args[0]):
+            if _name not in _keys:
+                _bad_name.append((_pool, _name, _node.lineno))
+    check(f"素材名防线: 表情类别/音效名都真实存在 {sorted(set(_bad_name)) or ''}", not _bad_name)
+
+    # 37. 时停三层悬浮星光确实在三个高度
+    _quiet_reset()
+    p.start_time_stop()
+    p._play_timeline(1.5, p._tl_tracks, p._tl_events, p._tl_done)
+    _layers = sorted({round((q["y"] - p.H / 2) / p.H, 2) for q in p.parts
+                      if q["kind"] == "star" and q["grav"] == 0})
+    check(f"时停: 三层悬浮星光分在三个高度({_layers})",
+          all(v in _layers for v in (-0.04, -0.2, -0.34)))
+    _quiet_reset()
+
+    # 38. 时停/回溯菜单项:原来 _tfx 用了不存在的 self.ss,一点就抛异常
+    _quiet_reset()
+    p.tfx = None
+    _errs = []
+    for _name, _st in (("start_time_stop", "tstop"), ("start_rewind", "rewind")):
+        _quiet_reset()
+        try:
+            getattr(p, _name)()
+            _ok = p.state == _st and p.tfx is not None and p.tfx.mode is not None
+        except Exception as _e:
+            _ok = False
+            _errs.append(repr(_e))
+        check(f"时停/回溯: {_name} 能正常开演 {_errs[-1:] or ''}", _ok)
+    check("时停/回溯: 精灵按当前缩放和超采样建",
+          p.tfx is not None and p.tfx.scale == p.scale and p.tfx.ss == pet.SS)
+    p.rebuild_scale_cache()
+    check("时停/回溯: 改缩放后丢掉旧尺寸精灵,下次按新尺寸重建", p.tfx is None)
+    _quiet_reset()
+
+    # 39. 摸头的爱心从摸到的地方冒出来;没有点击位置时落在发顶
+    _quiet_reset()
+    p._pet_combo, p._pet_combo_cd = [], time.time() + 999
+    p._last_click = (p.W * 0.40, p.H * 0.33, time.time())
+    _rand = pet.random.random
+    pet.random.random = lambda: 0.99
+    try:
+        p.pet_head()
+        _hy = [q["y"] for q in p.parts if q["kind"] == "heart"]
+        _hx = [q["x"] for q in p.parts if q["kind"] == "heart"]
+        check(f"摸头爱心: 从点击处冒出({len(_hy)})",
+              _hy and all(abs(y - p.H * 0.33) <= 8.5 for y in _hy)
+              and all(abs(x - p.W * 0.40) <= 26.5 for x in _hx))
+        _quiet_reset()
+        p._pet_combo = []
+        p._last_click = None
+        p.pet_head()
+        _hy = [q["y"] for q in p.parts if q["kind"] == "heart"]
+        check("摸头爱心: 没有点击位置时落在发顶",
+              _hy and all(abs(y - (p.H / 2 - 0.14 * p.H)) <= 8.5 for y in _hy))
+    finally:
+        pet.random.random = _rand
+    _quiet_reset()
+
+    # ---- 40~43 帽檐星轨(E34) ----
+    # 40. 远侧在立绘之前画、近侧之后画;三颗天体每帧都贴上
+    _quiet_reset()
+    _orbit_save = p.hat_orbit
+    p.hat_orbit = True
+    _layers, _bodies = [], []
+    _real_dho, _real_ob = p._draw_hat_orbit, p.fx.orbit_body
+    p._draw_hat_orbit = lambda fr, items, near: (_layers.append(near), _real_dho(fr, items, near))
+    p.fx.orbit_body = lambda fr, x, y, name, depth: (_bodies.append(name),
+                                                     _real_ob(fr, x, y, name, depth))
+    try:
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        check(f"帽檐星轨: 先远侧后近侧、三颗都画({_layers}, {sorted(_bodies)})",
+              _layers == [False, True] and sorted(_bodies) == ["crystal", "moon", "planet"])
+        check("帽檐星轨: 只在渲染里贴图,安静档保持 20fps", p._frame_delay() == 50)
+        # 41. 设置开关:关掉就一颗都不画,并且落盘
+        _bodies.clear()
+        p.toggle_hat_orbit()
+        _now = time.time()
+        p.render(_now, _now - p.t0)
+        _saved = json.load(open(pet.CONFIG_FILE, encoding="utf-8")).get("hat_orbit")
+        check(f"帽檐星轨: 设置关掉后不画且写进存档({len(_bodies)}, {_saved})",
+              not _bodies and p.hat_orbit is False and _saved is False)
+        p.toggle_hat_orbit()
+        check("帽檐星轨: 再打开恢复", p.hat_orbit is True)
+    finally:
+        del p._draw_hat_orbit, p.fx.orbit_body
+        p.hat_orbit = _orbit_save
+        p.bubble = None
+
+    # 42. 轨道时钟:醒着前进;睡着慢慢停住;回溯时倒着转
+    _quiet_reset()
+    p._orbit_speed, p._orbit_t = 1.0, 0.0
+    for _ in range(10):
+        _tick_quiet()
+    check(f"帽檐星轨: 醒着时轨道在走({p._orbit_t:.3f})", p._orbit_t > 0.2)
+    p.state = "sleep"
+    for _ in range(90):
+        p.last = time.time() - 0.033
+        p._tick_body()
+        p.state = "sleep"
+    _t_before = p._orbit_t
+    p.last = time.time() - 0.033
+    p._tick_body()
+    check(f"帽檐星轨: 睡着后慢慢停住(速度 {p._orbit_speed:.3f})",
+          abs(p._orbit_speed) < 0.08 and p._orbit_t - _t_before < 0.004)
+    _quiet_reset()
+    p.start_rewind()
+    p._orbit_speed = -2.2
+    _t_before = p._orbit_t
+    p.last = time.time() - 0.033
+    p._tick_body()
+    check("帽檐星轨: 时间回溯时倒着转", p.state == "rewind" and p._orbit_t < _t_before)
+    _quiet_reset()
+    p._orbit_speed = 1.0
+
+    # 43. 转圈时星轨跟着整只旋转(和精灵同一个旋转中心与缩放)
+    _w, _h = p.spr2.size
+    _sprite = p.spr2.rotate(90, expand=True)
+    _items = p._hat_orbit_screen(p.spr2, _sprite, 100, 50, 90, 0.0, 1.0, 0.0, time.time())
+    _flat = p._hat_orbit_screen(p.spr2, p.spr2, 100, 50, 0, 0.0, 1.0, 0.0, time.time())
+    _ok = True
+    for (_n1, _x1, _y1, *_), (_n2, _x2, _y2, *_) in zip(_items, _flat):
+        _ex, _ey = p._rotate_about(_x2 - 100 - _w / 2, _y2 - 50 - _h / 2, 90)
+        if abs(_x1 - (100 + _sprite.width / 2 + _ex)) > 1 or abs(_y1 - (50 + _sprite.height / 2 + _ey)) > 1:
+            _ok = False
+    check("帽檐星轨: 旋转时每个点都随精灵转过去", _ok)
+    _quiet_reset()
+
+    # ---- 44~46 稳健性(E35/E36) ----
+    # 44. 菜单/按钮回调出错:栈照旧进 stderr(pythonw 下即 pet_error.log),
+    # 她说一句;连点只说一次
+    _quiet_reset()
+    import io as _io
+    _err_buf, _old_err = _io.StringIO(), sys.stderr
+    sys.stderr = _err_buf
+    try:
+        p._tk_err_cd = 0.0
+        _btn = tk.Button(root, command=lambda: 1 / 0)
+        _btn.invoke()
+        _first_bubble = p.bubble
+        p.bubble = None
+        _btn.invoke()
+        _btn.destroy()
+    finally:
+        sys.stderr = _old_err
+    check("回调出错: 栈写进 stderr、她提示一次",
+          "ZeroDivisionError" in _err_buf.getvalue()
+          and _first_bubble and "pet_error.log" in _first_bubble[0] and p.bubble is None)
+    p._tk_err_cd = 0.0
+    _quiet_reset()
+
+    # 45. 互动精灵在后台补建完成(启动时只同步建待机要用的)
+    _deadline = time.time() + 5
+    p._warm_fx_deferred()
+    while not getattr(p.fx, "_deferred_done", False) and time.time() < _deadline:
+        time.sleep(0.05)
+    check("启动提速: 冲击波/命中光环/喷气团/星核已在后台补建",
+          getattr(p.fx, "_deferred_done", False) and p.fx.hit and p.fx._shock_sets)
+
+    # 46. 菜单冒烟:右键菜单每一项真的点一遍,任何一项抛异常就 FAIL。
+    # 时停菜单曾经一点就抛 AttributeError,界面上却什么都不发生(E33)。
+    # 外部副作用全部打桩:注册表、浏览器、子进程、音频、联网;阻塞对话框建好
+    # 就关(等同取消);「退出」不点。点完把各开关恢复原状。
+    _quiet_reset()
+    import urllib.request as _ur
+    _menu_errs = []
+    _flags = ("click_through", "topmost", "sound_on", "tts_on", "fg_watch",
+              "battery_watch", "hat_orbit", "magic_style")
+    _flag_save = {f: getattr(p, f) for f in _flags}
+    _water_save, _scale_save = p.water_min, p.scale
+    _stubs = [(pet, "autostart_set", lambda on: True),
+              (pet, "mci", lambda c: (0, "")),
+              (pet.webbrowser, "open", lambda *a, **k: True),
+              (pet.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("测试"))),
+              (_ur, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("测试不联网"))),
+              (p, "_center_and_wait", lambda win, focus=None: win.destroy()),
+              (p, "_on_tk_error", lambda et, ev, tb: _menu_errs.append(
+                  (_menu_label[0], "%s: %s" % (et.__name__, ev))))]
+    _saved = [(obj, name, obj.__dict__.get(name, None), name in obj.__dict__)
+              for obj, name, _ in _stubs]
+    _menu_label = [""]
+    _old_handler = root.report_callback_exception
+    for obj, name, fn in _stubs:
+        setattr(obj, name, fn)
+    root.report_callback_exception = lambda et, ev, tb: p._on_tk_error(et, ev, tb)
+    _count = 0
+    try:
+        def _walk(menu, path):
+            end = menu.index("end")
+            out = []
+            for i in range(0 if end is None else end + 1):
+                t = menu.type(i)
+                if t in ("separator", "tearoff"):
+                    continue
+                label = menu.entrycget(i, "label")
+                if t == "cascade":
+                    out += _walk(root.nametowidget(menu.entrycget(i, "menu")), path + [label])
+                elif menu.entrycget(i, "state") != "disabled" and label != "退出":
+                    out.append((" ▸ ".join(path + [label]), menu, i))
+            return out
+        for _label, _m, _i in _walk(p._build_menu(), []):
+            _quiet_reset()
+            _menu_label[0] = _label
+            _m.invoke(_i)
+            _count += 1
+            if p.singing:
+                p.stop_sing()
+            for _w in root.winfo_children():
+                if isinstance(_w, tk.Toplevel):
+                    try:
+                        _w.destroy()
+                    except tk.TclError:
+                        pass
+            if abs(p.scale - _scale_save) > 1e-6:
+                p.set_scale(_scale_save)
+    finally:
+        for obj, name, old, had in _saved:
+            if had:
+                setattr(obj, name, old)
+            else:
+                try:
+                    delattr(obj, name)
+                except AttributeError:
+                    pass
+        root.report_callback_exception = _old_handler
+        p.chatbox = None
+    _togglers = {"click_through": p.toggle_click_through, "topmost": p.toggle_topmost,
+                 "sound_on": p.toggle_sound, "tts_on": p.toggle_tts,
+                 "fg_watch": p.toggle_fg_watch, "battery_watch": p.toggle_battery_watch,
+                 "hat_orbit": p.toggle_hat_orbit, "magic_style": p.toggle_magic_style}
+    for _f, _v in _flag_save.items():
+        if getattr(p, _f) != _v:
+            _togglers[_f]()
+    if p.water_min != _water_save:
+        p.set_water_reminder(_water_save)
+    p.pomo = None
+    p.sfx.enabled = False
+    check(f"菜单冒烟: 点了 {_count} 项,没有一项抛异常 {_menu_errs or ''}",
+          _count >= 50 and not _menu_errs)
+    check("菜单冒烟: 开关都恢复原状",
+          all(getattr(p, f) == v for f, v in _flag_save.items()) and p.water_min == _water_save)
+    _quiet_reset()
+
+    # ---- 47. 打开完整菜单就在后台预建时停精灵,点时停时直接用(E37) ----
+    _quiet_reset()
+    p.tfx = None
+    # tk_popup 在 Windows 上会进模态菜单循环、一直等人点,用例里换成空操作;
+    # _show_full_menu 其余代码(含预建钩子)照常跑
+    with patch.object(tk.Menu, "tk_popup", lambda self, x, y, entry="": None):
+        p._show_full_menu(200, 200)
+    try:
+        p._popup_menu.destroy()
+    except Exception:
+        pass
+    _deadline = time.time() + 5
+    while getattr(p, "tfx", None) is None and time.time() < _deadline:
+        time.sleep(0.05)
+    _prebuilt = p.tfx
+    p.start_time_stop()
+    check("时停预建: 打开菜单后后台建好,开演用的就是预建的那份",
+          _prebuilt is not None and p.tfx is _prebuilt and _prebuilt.scale == p.scale
+          and p.state == "tstop")
+    _quiet_reset()
+
+    # ---- 48. 聊天窗字体预热:有人在互动就往后推,空闲时才做(E37) ----
+    _quiet_reset()
+    p._text_warmed = False
+    p.last_interact = time.time()               # 刚被摸过
+    _after_calls = []
+    with patch.object(p.root, "after", lambda ms, fn=None, *a: _after_calls.append(ms)):
+        p._warm_tk_text()
+    check("字体预热: 有人互动时不做、5 秒后再看",
+          not p._text_warmed and _after_calls == [5000])
+    p.last_interact = time.time() - 10
+    p._warm_tk_text()
+    check("字体预热: 空闲时做完", p._text_warmed is True)
+    _quiet_reset()
+
+    # ---- 49. 唱歌:UI 线程不碰 MCI;声音关掉时只做动作不出声(E38) ----
+    _quiet_reset()
+    import threading as _th
+    _mci_calls = []
+    _real_mci = pet.mci
+    pet.mci = lambda c: (_mci_calls.append((_th.current_thread().name, c.split()[0])),
+                         (0, "playing") if c.startswith("status") else (0, ""))[1]
+    try:
+        p.sfx.enabled = True
+        p.singing = False
+        p.sing()
+        time.sleep(0.4)
+        _main = [c for th, c in _mci_calls if th != "pet-sfx"]
+        check(f"唱歌: MCI 全在音频线程上({sorted(set(th for th, _ in _mci_calls))})",
+              p.singing and not _main and p.sfx.song_playing)
+        p.stop_sing()
+        time.sleep(0.3)
+        check("唱歌: 停下后设备收掉", not p.sfx.song_playing and not p.singing)
+        # 声音总开关关掉:照样唱,但不出声
+        _mci_calls.clear()
+        p.sfx.enabled = False
+        p.singing = False
+        p.sing()
+        time.sleep(0.2)
+        check(f"唱歌: 声音关掉时不出声、动画照旧({[c for _, c in _mci_calls]})",
+              p.singing and p._sing_audio is False
+              and not [c for _, c in _mci_calls if c in ("open", "play")])
+        p.stop_sing()
+    finally:
+        pet.mci = _real_mci
+        p.sfx.enabled = False
+        p.singing = False
     _quiet_reset()
 
     (p._fast_ok, p.last_interact, pet.cursor_pos, p._micro_motion,

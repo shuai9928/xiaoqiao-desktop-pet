@@ -1,15 +1,24 @@
 """动作时序、打断和特效边界回归,不启动桌宠或触碰存档。"""
+import json
+import os
+import threading
 import unittest
+from collections import OrderedDict
 from unittest.mock import Mock, patch
 from PIL import Image, ImageDraw
 import pet
 import fx
+import life
 
 
 class ActionTests(unittest.TestCase):
     def make_pet(self):
         p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
         p.state, p.fy, p.ground_feet = 'idle', 800., 800.
+        p.W, p.H = 540, 650          # 特效位置按窗口比例换算,壳桌宠也得有尺寸
         p.sfx = Mock()
         p.say, p.land_fx, p.star_burst = Mock(), Mock(), Mock()
         with patch.object(pet.time, 'time', return_value=100):
@@ -146,6 +155,9 @@ class ChoreographyTests(unittest.TestCase):
 
     def make_pet(self):
         p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
         p.x, p.x_min, p.x_max, p.scale, p.W, p.H, p.face = 400., 0, 1000, 1, 430, 520, 1
         p.sfx = Mock()
         for name in ('say', 'play_emotion', 'add_part', 'land_fx', 'star_burst', 'confetti_burst'):
@@ -243,6 +255,9 @@ class EverydayMotionTests(unittest.TestCase):
 
     def test_eating_recovers_after_long_frame(self):
         p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
         for age in (0, 2.2, 3, 20):
             self.assertEqual(p._eat_pose(age), (1, 0))
         for i in range(133):
@@ -252,12 +267,18 @@ class EverydayMotionTests(unittest.TestCase):
 
     def test_yawn_settles_to_sleep_without_squash_jump(self):
         p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
         self.assertEqual(p._yawn_pose(0), (1, 0))
         self.assertEqual(p._yawn_pose(1.6), (1, -.06))
         self.assertEqual(p._yawn_pose(10), (1, -.06))
 
     def test_wake_stretch_cancelled_by_new_interaction_or_action(self):
         p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
         p.state, p.state_until, p.last_interact = 'idle', 103, 90
         p._micro_motion = None
         p._micro_allowed, p.start_stretch = Mock(return_value=True), Mock()
@@ -360,6 +381,9 @@ class LivelinessTests(unittest.TestCase):
     def test_hop_starts_and_ends_on_ground_with_whole_bounces(self):
         for amp in (.4, .5, .7, .8, .95):
             p = pet.Pet.__new__(pet.Pet)
+            p._core_edition = False  # Explicit retired-engine compatibility fixture.
+            p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+            p.state, p._swing, p.drag = 'idle', None, None
             p.hop(amp)
             total = p._hop_total
             self.assertEqual(p.hop_t, total)
@@ -451,6 +475,219 @@ class LivelinessRound2Tests(unittest.TestCase):
         self.assertEqual(f(5000), 0)
         vals = [f(d) for d in range(0, 400, 10)]
         self.assertTrue(all(a >= b for a, b in zip(vals, vals[1:])))
+
+
+class LivelinessRound3Tests(unittest.TestCase):
+    """动态感第三批(E29~E31):落地冲击、飞行速度线、喷气团。"""
+
+    def test_puff_prebuilt_and_frame_path_only_pastes(self):
+        layer = fx.FX(1, 2)
+        self.assertEqual(len(layer.puff), layer.PUFF_STEPS)
+        boom = AssertionError('喷气团每帧只准贴图')
+        im = Image.new('RGBA', (500, 300), (26, 24, 40, 255))
+        with patch.object(Image.Image, 'filter', side_effect=boom), \
+                patch.object(Image.Image, 'rotate', side_effect=boom), \
+                patch.object(Image.Image, 'resize', side_effect=boom), \
+                patch.object(fx.ImageFilter, 'GaussianBlur', side_effect=boom):
+            for i in range(12):
+                layer.puff_at(im, 250, 150, i / 12)
+        blank = Image.new('RGBA', (500, 300), (26, 24, 40, 255))
+        for p in (-.1, 1., 3.):
+            layer.puff_at(blank, 250, 150, p)
+        self.assertEqual(blank.tobytes(), Image.new('RGBA', (500, 300), (26, 24, 40, 255)).tobytes())
+        self.assertNotIn('puff', pet.AMBIENT_PARTS)
+
+    def test_landing_strength_clamps_and_grows_with_speed(self):
+        f = pet.Pet._landing_strength
+        self.assertEqual(f(0), .35)
+        self.assertEqual(f(1100), 1)
+        self.assertEqual(f(9000), 1)
+        vals = [f(v) for v in range(0, 1400, 50)]
+        self.assertTrue(all(a <= b for a, b in zip(vals, vals[1:])))
+
+    def shell(self, vx, vy):
+        p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
+        p.vx, p.vy, p.W, p.scale = vx, vy, 540, 1.0
+        return p
+
+    def test_speed_lines_only_when_fast_and_always_behind(self):
+        self.assertEqual(self.shell(200, -100)._speed_line_specs(10.0), [])
+        for vx, vy in ((-1300, -900), (900, 0), (0, 1200), (700, 700)):
+            specs = self.shell(vx, vy)._speed_line_specs(10.0)
+            self.assertEqual(len(specs), 7)
+            for (x0, y0), (x1, y1), a in specs:
+                # 起笔在身后(和速度方向相反),线段也朝身后延伸
+                self.assertLess(x0 * vx + y0 * vy, 0)
+                self.assertLess((x1 - x0) * vx + (y1 - y0) * vy, 0)
+                self.assertTrue(0 < a <= 255)
+
+    def test_speed_lines_grow_with_speed_and_are_stable_within_a_slot(self):
+        def mean_len(sp):
+            specs = self.shell(-sp, 0)._speed_line_specs(10.0)
+            return sum(abs(x1 - x0) for (x0, _), (x1, _), _ in specs) / len(specs)
+        self.assertLess(mean_len(500), mean_len(1300))
+        p = self.shell(-1000, -300)
+        self.assertEqual(p._speed_line_specs(10.01), p._speed_line_specs(10.04))   # 同一 50ms 片
+
+
+class HatOrbitTests(unittest.TestCase):
+    """帽檐星轨(E34)。"""
+
+    def test_sprites_prebuilt_and_frame_path_only_pastes(self):
+        layer = fx.FX(1, 2)
+        for name in ('planet', 'moon', 'crystal'):
+            self.assertEqual(len(layer.orbit[name]), layer.ORBIT_DEPTH)
+        self.assertEqual(len(layer.orbit_dots), layer.ORBIT_DOT_STEPS)
+        boom = AssertionError('星轨每帧只准贴图')
+        im = Image.new('RGBA', (600, 400))
+        with patch.object(Image.Image, 'filter', side_effect=boom), \
+                patch.object(Image.Image, 'rotate', side_effect=boom), \
+                patch.object(Image.Image, 'resize', side_effect=boom), \
+                patch.object(fx.ImageFilter, 'GaussianBlur', side_effect=boom):
+            for i in range(12):
+                layer.orbit_body(im, 300, 200, ('planet', 'moon', 'crystal')[i % 3], i / 11)
+                layer.orbit_dot(im, 300, 200, i / 11)
+
+    def test_layout_shape_depth_and_periodicity(self):
+        lay = pet.Pet._hat_orbit_layout
+        items = lay(3.7)
+        n_bodies = len(pet.HAT_ORBIT_BODIES)
+        self.assertEqual(len(items), pet.HAT_ORBIT_PATH + n_bodies * (pet.HAT_ORBIT_TRAIL + 1))
+        names = [it[0] for it in items if it[0] not in (None, 'path')]
+        self.assertEqual(sorted(names), sorted(b[0] for b in pet.HAT_ORBIT_BODIES))
+        for name, nx, ny, depth, near, level in items:
+            self.assertTrue(0 <= depth <= 1)
+            self.assertEqual(near, depth > .5)
+        # 轨道虚点不随时间动;每颗天体过一个自己的周期回到原位
+        self.assertEqual([it for it in lay(0) if it[0] == 'path'],
+                         [it for it in lay(123.4) if it[0] == 'path'])
+        for name, _, period, _ in pet.HAT_ORBIT_BODIES:
+            a = next(it for it in lay(2.0) if it[0] == name)
+            b = next(it for it in lay(2.0 + period) if it[0] == name)
+            self.assertAlmostEqual(a[1], b[1], places=6)
+            self.assertAlmostEqual(a[2], b[2], places=6)
+
+    def test_spin_follows_mood_of_the_state(self):
+        f = pet.Pet._orbit_spin_target
+        self.assertEqual(f('idle'), 1.0)
+        self.assertEqual(f('sleep'), 0.0)
+        self.assertEqual(f('tstop'), 0.0)        # 时停:星星也停
+        self.assertLess(f('rewind'), 0)          # 回溯:倒着转
+        self.assertGreater(f('magic'), 1.0)
+
+    def test_rotate_about_matches_pil_rotate(self):
+        im = Image.new('RGBA', (101, 101))
+        ImageDraw.Draw(im).rectangle([85, 48, 90, 52], fill=(255, 0, 0, 255))
+        for angle in (90, -40, 135):
+            r = im.rotate(angle, expand=True)
+            bb = r.getbbox()
+            got = ((bb[0] + bb[2]) / 2 - r.width / 2, (bb[1] + bb[3]) / 2 - r.height / 2)
+            want = pet.Pet._rotate_about(87.5 - 50.5, 50 - 50.5, angle)
+            self.assertAlmostEqual(got[0], want[0], delta=1.5)
+            self.assertAlmostEqual(got[1], want[1], delta=1.5)
+
+    def test_follow_is_zero_at_rest_and_leans_with_the_hat(self):
+        f = pet.Pet._orbit_follow
+        self.assertEqual(f(300, 100, 600, 700, 0, 1, 0), (0.0, 0.0))
+        dx, dy = f(300, 100, 600, 700, .115, 1, 0)
+        self.assertGreater(dx, 0)                # 实测:倾斜 0.115 帽子往 +x 挪约 30px
+        self.assertAlmostEqual(dy, 0)
+        dx2, _ = f(300, 100, 600, 700, -.115, 1, 0)
+        self.assertAlmostEqual(dx2, -dx)
+
+
+class LegLayerRenderTests(unittest.TestCase):
+    """腿层切出底图以后的整帧渲染(无窗口:壳桌宠 + 真素材,推帧换成 Mock)。"""
+
+    def make_pet(self):
+        paths = [os.path.join(pet.ASSETS, f'legs_{s}.{ext}')
+                 for s in 'lr' for ext in ('png', 'meta')]
+        if not all(os.path.exists(pth) for pth in paths):
+            self.skipTest('没有腿层素材')
+        p = pet.Pet.__new__(pet.Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+        p.state, p._swing, p.drag = 'idle', None, None
+        p.root, p.scale = Mock(), 1.0
+        p.W, p.H = int(pet.BASE_W * p.scale), int(pet.BASE_H * p.scale)
+        p.main_src = Image.open(os.path.join(pet.ASSETS, 'main.png')).convert('RGBA')
+        p.hat_src = p.hair_src = None
+        p.hair_off = (0, 0)
+        for side in 'lr':
+            with open(os.path.join(pet.ASSETS, f'legs_{side}.meta')) as f:
+                bb = json.load(f)['bbox']
+            setattr(p, f'legs{side}_src', Image.open(
+                os.path.join(pet.ASSETS, f'legs_{side}.png')).convert('RGBA'))
+            setattr(p, f'legs{side}_off', (bb[0], bb[1]))
+        p._warp_cache, p._legs_warp_cache = OrderedDict(), OrderedDict()
+        p._hat_warp_cache, p._hair_warp_cache = OrderedDict(), OrderedDict()
+        p.glow_cache, p._expr_rs = OrderedDict(), OrderedDict()
+        p._castfx_lock, p.decors_meta, p._text_warm_scheduled = threading.Lock(), [], True
+        p.rebuild_scale_cache()
+        p.state, p.x, p.fy, p.ground_feet, p.cfg = 'idle', 600.0, 800.0, 800.0, {}
+        p.hop_t = p.lean = p._drag_lean = p._bend = p.look_x = p.look_y = 0.0
+        p.squash, p.drag, p.life = 1.0, None, life.LifeMotion()
+        p.t0 = p._life_prev_t = p._life_prev_bob = p.blink_until = 0.0
+        p._spin_rot = p._spin_lift = p._prox = p.snow_ground = 0.0
+        p._micro_motion = p.sticker = p.bubble = None
+        p._afters, p.circles, p._shocks, p.parts = [], [], [], []
+        p.hat_orbit = p.singing = p.thinking_now = p.selftest = p.ai_lights = False
+        p._push = Mock()
+        return p
+
+    def test_roll_ground_reference_includes_leg_layers(self):
+        """打滚贴地的参照必须是叠好腿层、还没旋转的合成图。原来拿只有底图
+        的 warped 当参照:切腿后底图可见下沿比脚高 56 原画 px,一进 roll
+        (还没开始转)整只就往上一跳,滚完再掉回地面。"""
+        p = self.make_pet()
+        seen = []
+        real = pet.Pet._roll_ground_offset
+
+        def spy(sprite, resting):
+            got = real(sprite, resting)
+            seen.append((sprite.getbbox(), resting.getbbox(), got))
+            return got
+        p.state, now = 'roll', 1000.0
+        with patch.object(pet.Pet, '_roll_ground_offset', staticmethod(spy)):
+            p.render(now, now - p.t0)
+            p._spin_rot = -90.0
+            p.render(now, now - p.t0)
+        (upright, ref0, off0), (_, ref90, _) = seen
+        self.assertEqual(off0, 0)             # 没转就不该挪
+        self.assertEqual(ref0, upright)       # 参照 = 贴上去的那张合成图
+        self.assertEqual(ref90, upright)      # 转起来以后仍按直立合成图贴地
+
+    def test_leg_layer_cache_ignores_face_and_sway(self):
+        """腿层变形不吃五官贴图、也不吃帽/发/裙摆的 sway:眨眼和弹簧台阶
+        只该重变形底图(原来腿层键里塞了整个 wkey,每次白变形两条腿)。"""
+        p = self.make_pet()
+        calls = []
+        real = p.warper.warp
+
+        def counting(*a, **kw):
+            calls.append('legs' if kw.get('leg_bend') else 'base')
+            return real(*a, **kw)
+        p.warper.warp = counting
+        now = 1000.0
+        p.render(now, now - p.t0)
+        p.render(now, now - p.t0)             # 同一时刻再来一帧:全部命中
+        self.assertEqual(calls, ['base', 'legs', 'legs'])
+        calls.clear()
+        p.blink_until = now + 1.0             # 眨眼:只换脸
+        p.render(now, now - p.t0)
+        self.assertEqual(calls, ['base'])
+        calls.clear()
+        p.life.hem.x += 1.5                   # 裙摆弹簧走了一个台阶
+        p.render(now, now - p.t0)
+        self.assertEqual(calls, ['base'])
+        calls.clear()
+        p.lean = 0.05                         # 腿真正用到的输入变了才重变形
+        p.render(now, now - p.t0)
+        self.assertEqual(calls, ['base', 'legs', 'legs'])
+        self.assertLessEqual(len(p._legs_warp_cache), 12)
 
 
 if __name__ == '__main__':

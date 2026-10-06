@@ -26,8 +26,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='xiaoqiao-checks-') as directory:
         stage=Path(directory)
         for p in ROOT.glob('*.py'):
-            if p.name in ('pet.py','agent.py','ai_chat.py','fx.py','depth_model.py') or p.name.startswith('test_'):
-                shutil.copy2(p,stage/p.name)
+            shutil.copy2(p,stage/p.name)
         shutil.copytree(ROOT/'assets',stage/'assets',ignore=shutil.ignore_patterns(
             'ai_config*.json','memories*.json','*backup*','audio_v2','*.log','*.tmp'))
         (stage/'assets'/'ai_config.json').write_text(json.dumps({

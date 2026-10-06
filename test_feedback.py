@@ -9,6 +9,8 @@ from pet import Pet
 class StickerFeedbackTests(unittest.TestCase):
     def setUp(self):
         self.p = Pet.__new__(Pet)
+        self.p._core_edition = False  # Explicit retired-engine compatibility fixture.
+        self.p.stickers_enabled = True  # This suite tests retired sticker art, not the shipped profile.
         self.p.sticker = self.p._sticker_previous = None
         self.p.emotions = {'happy':['one','two'],'shy':['three'],'surprised':['four']}
         self.files = patch('pet.os.path.exists',return_value=True)

@@ -204,6 +204,8 @@ def assemble():
     zn = os.path.join(HERE, "zcode_notify.py")
     if os.path.exists(zn):
         shutil.copy2(zn, os.path.join(OUT, "zcode_notify.py"))
+        # zcode_notify 要用它(动作写成人话、文件锁),少了会话灯就不更新
+        shutil.copy2(os.path.join(HERE, "ai_lights_core.py"), os.path.join(OUT, "ai_lights_core.py"))
 
     with open(os.path.join(OUT, "使用说明.txt"), "w", encoding="utf-8") as f:
         f.write(README)

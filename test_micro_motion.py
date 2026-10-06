@@ -8,6 +8,7 @@ import pet
 class MicroMotionTests(unittest.TestCase):
     def setUp(self):
         self.p = pet.Pet.__new__(pet.Pet)
+        self.p._core_edition = False  # Explicit retired-engine compatibility fixture.
         self.p.state = "idle"
         self.p.drag = None
         self.p.singing = self.p.thinking_now = False

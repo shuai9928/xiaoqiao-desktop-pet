@@ -127,13 +127,26 @@ def load_persona():
     return base
 
 
-def build_system_instruction(persona):
+def build_system_instruction(persona, *, core=False):
     traits = persona.get("traits", {})
     trait_str = ", ".join(
         f"{k}={v:.0%}" for k, v in traits.items()
     ) if traits else "自然、聪明、有点俏皮"
     likes = "、".join(persona.get("likes", [])[:6]) or "星星、魔法、史莱姆"
     habits = "、".join(persona.get("habits", [])[:4]) or "偷偷观察主人、说话简短"
+    if core:
+        return (
+            f"你是「{persona['name']}」，住在桌面秋千和小屋里的魔法少女。\n"
+            f"性格：{trait_str}。喜欢：{likes}。\n"
+            "陪用户聊天；普通闲聊简短自然，技术问题给出清楚、有内容的回答。"
+            "不要每句都叫主人、撒娇或添加表情。\n"
+            "当前应用只保留摸头、喂糖、休息、场景与AI信息；"
+            "系统工具、游戏、天气、计时、大型魔法已经移除。"
+            "你不能执行电脑操作、读取屏幕/剪贴板、设置提醒；"
+            "不能声称完成这些操作，也不能声称知道没有提供的额度或任务过程。\n"
+            "只输出JSON，包含say、emotion、action、intent。"
+            "action和intent始终为null；用户直接点控件或输入核心指令时由本地处理。"
+        )
     return (
         f"你是「{persona['name']}」——生活在主人电脑桌面里的魔法少女桌宠。\n"
         f"主人是你最重要的研究员/程序员,你住在主人电脑里陪伴她。\n"
@@ -492,7 +505,8 @@ class AIBrain:
                 self.cfg["api_key"] = plain
         self._migrate_key_to_encrypted(cfg if isinstance(cfg, dict) else {})
         self.persona = load_persona()
-        self.system_instruction = build_system_instruction(self.persona)
+        self.core_edition = True
+        self.system_instruction = build_system_instruction(self.persona, core=True)
         self.examples = _load_examples()
         self.memory = MemoryStore()
         self._cooldown_until = 0.0
@@ -618,6 +632,12 @@ class AIBrain:
         return self._client
 
     def _schema(self):
+        if getattr(self, "core_edition", True):
+            return {"type": "object", "properties": {
+                "say": {"type": "string"},
+                "emotion": {"type": "string", "enum": EMOTIONS},
+                "action": {"type": "null"}, "intent": {"type": "null"}},
+                "required": ["say", "emotion", "action", "intent"]}
         return {
             "type": "object",
             "properties": {
@@ -669,6 +689,10 @@ class AIBrain:
             exs = select_examples(user_text, self.examples, last_em, limit=4)
             for e in exs:
                 a = e.get("assistant", {})
+                if getattr(self, "core_edition", True):
+                    if a.get("action") or a.get("intent"):
+                        continue
+                    a = dict(a, action=None, intent=None)
                 parts.append({"role": "user",
                               "parts": [{"text": e.get("user", "")}]})
                 parts.append({"role": "model",

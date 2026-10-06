@@ -1,36 +1,118 @@
-# Local environments and build outputs
-.venv/
-venv/
-__pycache__/
-*.py[cod]
+# 构建产物
 build/
 dist/
 release/
-*.spec
+__pycache__/
+*.pyc
 
-# Secrets, local history, state, and all backup variants
-.env
-.env.*
-!.env.example
-**/ai_config*.json
-!assets/ai_config.example.json
-**/memories*.json
-**/chat_history*.json
-**/pet_settings*.json
-**/pet_reminders*.json
-**/pet_state*.json
-**/pet_cmd*.json
-*.log
-*.tmp
-*.bak
-*.dmp
+# 运行时状态与日志
+pet_state.json
+pet_cmd.json
+pet_settings.json
+pet_reminders.json
+chat_history.json
+_push_debug.log
+pet_stacks.log
+pet_error.log
+_ask_debug.log
 .zcode_hook_state.json
-_tts_cache/
+
+# 一次性调试产物
+_tmp_*
+_comp*.png
+_comps.png
+_blink_sim*.png
+_cut_*.png
+_main_*.png
+_eye_grid.png
+_decor_check.png
+_preview_idle.png
+dib_test.png
+pet_now.png
+pet_final4.png
+push_input.png
+test_premul.png
+debug_premul.png
 _sfx_dl/
-_archive/
-_fxdev*/
-_soak*/
+
+# 密钥
+**/ai_config.json
+
+# 音效重制的旧版备份
 assets/audio_peaknorm_backup/
 assets/audio_v2/
-.vscode/
-.idea/
+
+# 聊天语音的运行时缓存
+_tts_cache/
+
+# 特效开发预览图
+_fxdev/*.png
+
+# 历史开发中间产物,只进不出
+_archive/
+pet_settings.json.tmp
+
+# 特效开发预览图
+_fxdev2/
+
+# 运行时备份/旧日志
+pet_settings.bak.json
+pet_settings.restore.json
+pet_error.prev.log
+
+# 调试探针/日志/备份副本(各会话的一次性产物)
+_p*.log
+_t*.log
+_c*.log
+_probe*.py
+_t_cast.py
+_t_trace.py
+_mine_backup.py
+
+# 浸泡监控采样日志
+soak_monitor.log
+
+# 运行时会话数据(个人数据不入库)
+ai_sessions/
+
+# 渲染证据/开发预览输出
+outputs/
+
+# 代码与原画的手工备份(2026-09~10 三周迭代产物)
+pet.py.bak-*
+assets/main.orig.png
+assets/main.prehat.png
+assets/main.prelegs.png
+assets/main.bak-swing.png
+pet_settings.bak-*.json
+pet_settings.before_*.json
+
+# 一次性调试图/临时脚本/泡水日志
+_zoom_*.png
+_v3_live_*.png
+_worry_*.png
+_hair_cut_check.png
+_hat_layer_check.png
+_legs2_check.png
+_rope_probe.png
+_edit_*.py
+_layout_*.py
+_smoke_*.py
+_soak_daemon_*.log
+
+# Official quota samples are local account state, not release assets.
+ai_quota_codex.json
+pet_cmd.ai-functions.tmp
+
+# 3D 小屋(Godot)运行时产物
+house3d/.godot/
+house3d/instance.lock
+house3d/_run.log
+house3d/_shot.png
+
+# Public handoff: personal memory, credentials and account snapshots stay local.
+assets/memories.json
+.env
+.env.*
+ai_quota*.json
+*.log

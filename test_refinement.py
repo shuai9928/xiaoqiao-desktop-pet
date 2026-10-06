@@ -8,6 +8,9 @@ import pet
 
 def body(scale=1):
     p = pet.Pet.__new__(pet.Pet)
+    p._core_edition = False  # Explicit retired-engine compatibility fixture.
+    p._seat_guard = Mock(return_value=False)  # These fixtures represent the old standing art.
+    p.state, p._swing, p.drag = 'idle', None, None
     p.state, p.drag, p.scale = 'idle', None, scale
     p.W, p.H, p.FOOT_Y = 430*scale, 520*scale, 490*scale
     p.fy = p.ground_feet = 800

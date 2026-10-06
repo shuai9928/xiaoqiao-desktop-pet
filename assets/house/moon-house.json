@@ -1,0 +1,41 @@
+{
+  "asset": "moon-house.png",
+  "size": [
+    1487,
+    1058
+  ],
+  "board": [
+    775,
+    255,
+    525,
+    560
+  ],
+  "room": {
+    "side_front_x": 55,
+    "side_back_x": 220,
+    "ceil_front_y": 150,
+    "ceil_back_y": 210,
+    "floor_front_y": 935,
+    "floor_back_y": 822
+  },
+  "swing": {
+    "ks": 0.58,
+    "cx": 435,
+    "top": 160,
+    "scene_bar_cx": 667,
+    "scene_bar_top": 5,
+    "plane_depth": 0.33,
+    "floor_y": 879,
+    "note": "rope tops (scene pivots) meet the front beam's underside (asset y\u2248207-234)"
+  },
+  "parallax": {
+    "front": 2,
+    "back": 5
+  },
+  "plaque": [
+    775,
+    255,
+    1300,
+    815
+  ]
+}

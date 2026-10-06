@@ -8,6 +8,7 @@ from pet import Pet
 class RecoveryTests(unittest.TestCase):
     def make_pet(self, scale=1):
         p = Pet.__new__(Pet)
+        p._core_edition = False  # Explicit retired-engine compatibility fixture.
         p.state, p.squash, p.lean, p.look_x = 'idle', 1, .02, .1
         p.scale, p.W, p.H, p.FOOT_Y = scale, 400*scale, 500*scale, 470*scale
         p.fy = p.ground_feet = 800
@@ -132,6 +133,160 @@ class RecoveryTests(unittest.TestCase):
             with patch('pet.time.time', return_value=100):
                 p.on_drag(SimpleNamespace(x_root=10, y_root=0))
             self.assertEqual(p.state, 'idle')
+
+
+class SfxThreadTests(unittest.TestCase):
+    """音效的 MCI 调用挪到专用音频线程(E36):UI 线程只做限频判断。"""
+
+    def make_sfx(self, calls, delay=0.0):
+        import threading
+        import time
+        import pet
+
+        def fake_mci(c):
+            calls.append((threading.current_thread().name, c.split()[0]))
+            if delay and c.startswith(('open', 'play')):
+                time.sleep(delay)
+            return (0, '80') if c.startswith('status') else (0, '')
+
+        patcher = patch.object(pet, 'mci', fake_mci)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        root = SimpleNamespace(after=Mock(side_effect=AssertionError('音频线程不该碰 Tk')))
+        sfx = pet.SFX(root)
+        if not sfx.groups:
+            self.skipTest('assets/audio 不在')
+        self.addCleanup(lambda: sfx._q.put(('stop',)))
+        return sfx, next(iter(sfx.groups))
+
+    def test_play_returns_immediately_even_if_mci_is_slow(self):
+        import time
+        calls = []
+        sfx, name = self.make_sfx(calls, delay=0.25)
+        t0 = time.perf_counter()
+        self.assertTrue(sfx.play(name))
+        self.assertLess(time.perf_counter() - t0, 0.05)     # 原来要串行等 open+play
+        time.sleep(1.0)
+        self.assertEqual([c for _, c in calls][:3], ['open', 'play', 'status'])
+        self.assertTrue(all(th == 'pet-sfx' for th, _ in calls))
+
+    def test_clip_is_closed_after_its_length_on_the_audio_thread(self):
+        import time
+        calls = []
+        sfx, name = self.make_sfx(calls)
+        sfx.play(name)
+        time.sleep(0.2)
+        self.assertNotIn('close', [c for _, c in calls])    # 80ms 长度 + 0.5s 余量还没到
+        time.sleep(0.7)
+        self.assertIn(('pet-sfx', 'close'), calls)
+        self.assertEqual(sfx._chan, {})
+
+    def test_throttle_is_unchanged_and_close_all_waits(self):
+        import time
+        calls = []
+        sfx, name = self.make_sfx(calls)
+        self.assertTrue(sfx.play(name))
+        self.assertFalse(sfx.play(name))                   # 全局 5 秒限频照旧
+        sfx.enabled = False
+        sfx._next_any = 0
+        sfx._next = {}
+        self.assertFalse(sfx.play(name))                   # 总开关照旧
+        sfx.enabled = True
+        time.sleep(0.2)
+        sfx.close_all()
+        self.assertEqual(sfx._chan, {})
+
+
+class SongThreadTests(unittest.TestCase):
+    """唱歌也走音频线程,并遵守「语音(全部声音)」总开关(E38)。"""
+
+    def make_sfx(self, calls, delay=0.0):
+        import threading
+        import time
+        import pet
+
+        def fake_mci(c):
+            calls.append((threading.current_thread().name, c.split()[0]))
+            if delay and c.startswith(('open', 'play')):
+                time.sleep(delay)
+            return (0, 'playing') if c.startswith('status') else (0, '')
+
+        patcher = patch.object(pet, 'mci', fake_mci)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        sfx = pet.SFX(SimpleNamespace(after=Mock(side_effect=AssertionError('音频线程不该碰 Tk'))))
+        self.addCleanup(lambda: sfx._q.put(('stop',)))
+        return sfx
+
+    def test_song_starts_on_audio_thread_without_blocking(self):
+        import time
+        calls = []
+        sfx = self.make_sfx(calls, delay=0.25)
+        t0 = time.perf_counter()
+        self.assertTrue(sfx.play_song('x.mp3'))
+        self.assertLess(time.perf_counter() - t0, 0.05)      # 旧实现同步 open+play 要 290~490ms
+        time.sleep(0.9)
+        self.assertEqual([c for _, c in calls][:3], ['open', 'setaudio', 'play'])
+        self.assertTrue(all(th == 'pet-sfx' for th, _ in calls))
+        self.assertTrue(sfx.song_playing)
+        sfx.stop_song()
+        time.sleep(0.3)
+        self.assertFalse(sfx.song_playing)
+        self.assertIn('close', [c for _, c in calls])
+
+    def test_song_respects_the_sound_switch(self):
+        import time
+        calls = []
+        sfx = self.make_sfx(calls)
+        sfx.enabled = False
+        self.assertFalse(sfx.play_song('x.mp3'))
+        time.sleep(0.2)
+        self.assertEqual([c for _, c in calls if c in ('open', 'play')], [])
+        self.assertFalse(sfx.song_playing)
+
+
+class DeferredFxTests(unittest.TestCase):
+    """互动/动作精灵后台补建(E36)。"""
+
+    def test_defer_builds_later_and_draws_nothing_until_then(self):
+        import threading
+        from PIL import Image
+        import fx
+        layer = fx.FX(1, 1, defer=True)
+        for attr in ('hit', 'puff', 'orbs', '_shock_sets'):
+            self.assertIsNone(getattr(layer, attr, None), attr)
+        im = Image.new('RGBA', (300, 200))
+        layer.hit_ring(im, 150, 100, .3)
+        layer.puff_at(im, 150, 100, .3)
+        layer.orb(im, 150, 100, 'near', 1)
+        layer.shockwave(im, 150, 100, .3)
+        self.assertIsNone(im.getbbox())
+        # 待机首帧要用的照常同步建好
+        for attr in ('ground_static', 'breath', 'ripple', 'orbit', 'orbit_dots'):
+            self.assertIsNotNone(getattr(layer, attr, None), attr)
+        # 两条线程同时补建:只建一次,建完都能画
+        built = []
+        real = fx._hit_sprite
+
+        def counting(*a, **k):
+            built.append(1)
+            return real(*a, **k)
+
+        with patch.object(fx, '_hit_sprite', counting):
+            ts = [threading.Thread(target=layer.build_deferred) for _ in range(2)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(len(built), 2 * layer.HIT_STEPS)
+        layer.hit_ring(im, 150, 100, .3)
+        self.assertIsNotNone(im.getbbox())
+
+    def test_default_is_still_eager(self):
+        import fx
+        layer = fx.FX(1, 1)
+        self.assertIsNotNone(getattr(layer, 'hit', None))
+        self.assertIsNotNone(getattr(layer, '_shock_sets', None))
 
 
 if __name__ == '__main__':

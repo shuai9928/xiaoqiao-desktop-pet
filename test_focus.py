@@ -16,6 +16,7 @@ NOW = 10_000.0
 def focus_pet(phase="focus", mins=25.0, elapsed=0.0, now=NOW):
     """造一只壳桌宠:只有本模块用得到的字段,不跑 __init__。"""
     p = pet.Pet.__new__(pet.Pet)
+    p._core_edition = False  # Explicit retired-engine compatibility fixture.
     p.pomo = (None if phase is None else
               {"phase": phase, "due": now - elapsed + mins * 60, "mins": mins})
     p.state, p.drag, p.bubble, p.sticker = "idle", None, None, None
@@ -51,6 +52,7 @@ class PredicateTests(unittest.TestCase):
         """几个 unittest 文件用 Pet.__new__ 造壳桌宠、不跑 __init__,
         而 say() 会调到 focus_mode() —— 这里必须是 False 而不是崩。"""
         bare = pet.Pet.__new__(pet.Pet)
+        bare._core_edition = False  # Explicit retired-engine compatibility fixture.
         self.assertFalse(bare.focus_mode())
 
 
@@ -126,6 +128,16 @@ class EncouragementTests(unittest.TestCase):
         p.add_part = Mock()
         self._run(p, 25 * 60)
         self.assertEqual(p._start_micro_motion.call_count, 1)
+
+    def test_keeps_company_on_the_swing_too(self):
+        """秋千是默认的家:坐在上面也照常陪,不是只认地面待机。"""
+        p = focus_pet("focus")
+        p.state = "swing"
+        p.add_part = Mock()
+        self._run(p, 25 * 60)
+        kinds = {c.args[0] for c in p.add_part.call_args_list}
+        self.assertTrue(kinds, "坐在秋千上整段专注一次陪伴演出都没有")
+        self.assertTrue(kinds <= pet.AMBIENT_PARTS)
 
     def test_nothing_during_break(self):
         p = focus_pet("break")

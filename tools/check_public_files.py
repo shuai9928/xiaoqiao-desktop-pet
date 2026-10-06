@@ -36,7 +36,13 @@ def main():
             findings.append((name,0,'private-runtime-file'))
         if path.suffix.lower() not in ('.py','.md','.json','.txt','.yml','.yaml','.ps1','.bat'):
             continue
-        text=path.read_text(encoding='utf-8-sig')
+        try:
+            text=path.read_text(encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            if path.suffix.lower() != '.bat':
+                findings.append((name,0,'non-utf8-text'))
+                continue
+            text=path.read_text(encoding='gb18030')
         for line_no,line in enumerate(text.splitlines(),1):
             for kind,pattern in PATTERNS.items():
                 if pattern.search(line): findings.append((name,line_no,kind))

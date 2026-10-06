@@ -10,7 +10,7 @@
 | 安装并运行 | [安装与使用指南](GUIDE.md) |
 | 跟着图片体验功能 | [互动图解手册](INTERACTIONS.md) |
 | 查聊天指令、AI 设置和数据说明 | [聊天与桌面助手](ASSISTANT.md) |
-| 查找所有菜单项 | [首页完整菜单](../README.md#menus) |
+| 查找所有菜单项 | [首页完整菜单](../README.md) |
 | 看最新增加了什么 | [更新记录](../CHANGELOG.md) |
 | 找彩蛋、查看内容规格 | [互动与彩蛋清单](../CONTENTS.md) |
 | 阅读源码、运行测试、重新生成图片 | [开发指南](DEVELOPMENT.md)、[工具说明](../tools/README.md) |
