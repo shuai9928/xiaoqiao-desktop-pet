@@ -58,7 +58,7 @@ py pet.py --debug-state # 额外每秒写 pet_state.json(默认关闭:它会把�
 ## 内容清单
 
 全部互动/彩蛋/玩法的发现指南与规格对照见 [CONTENTS.md](CONTENTS-before-core.md);
-实验决策(保留/回滚原因)见 [EXPERIMENTS.md](../../EXPERIMENTS.md)。
+实验决策(保留/回滚原因)见 [EXPERIMENTS.md](../design/EXPERIMENTS.md)。
 
 ## 测试
 

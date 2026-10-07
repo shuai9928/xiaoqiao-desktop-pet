@@ -32,7 +32,8 @@ def main():
         path=ROOT/name
         if ((PRIVATE.match(path.name) and name!='assets/ai_config.example.json')
             or path.suffix.lower() in ('.log','.bak','.tmp','.dmp')
-            or any(part in ('.venv','__pycache__','_tts_cache','_archive','release','dist','build') for part in path.parts)
+            or any(part in ('.venv','__pycache__','_tts_cache','_archive') for part in Path(name).parts)
+            or Path(name).parts[0] in ('release','dist','build')
             or path.name=='.env' or path.name=='.zcode_hook_state.json'):
             findings.append((name,0,'private-runtime-file'))
         if path.suffix.lower() not in ('.py','.md','.json','.txt','.yml','.yaml','.ps1','.bat'):

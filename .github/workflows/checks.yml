@@ -13,4 +13,5 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt
       - run: python tools/check_public_files.py
-      - run: python tools/run_checks.py --unit-only
+      - name: Current desktop regression (isolated)
+        run: python tools/run_checks.py --unit-only

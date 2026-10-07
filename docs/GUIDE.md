@@ -1,102 +1,90 @@
-# 小乔 · 安装与使用指南
+# 安装与使用
 
-[← 返回产品展示](../README.md)
+[文档导航](README.md) · [AI 与数据](ASSISTANT.md) · [开发指南](DEVELOPMENT.md)
 
-[文档导航](README.md) · [互动图解手册](INTERACTIONS.md) · [聊天与桌面助手](ASSISTANT.md) · [开发指南](DEVELOPMENT.md)
+## 从源码启动
 
-
-
-## 从源码运行
-
-建议 Windows 10/11、Python 3.12–3.14（包含 Tkinter）。本机验证使用 Python 3.14。
+准备 Windows 10/11、Git 和带 Tkinter 的 Python。当前桌面版在 Python 3.14 上验证；渲染依赖 Pillow，托盘依赖 pystray，安装清单见根目录 `requirements.txt`。
 
 ```powershell
 git clone https://github.com/shuai9928/xiaoqiao-desktop-pet.git
 cd xiaoqiao-desktop-pet
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-if (!(Test-Path assets\ai_config.json)) { Copy-Item assets\ai_config.example.json assets\ai_config.json }
 .\.venv\Scripts\python.exe pet.py
 ```
 
-不配置密钥也能使用桌宠动作、语音、提醒和小游戏。程序运行后右键小乔打开互动卡片；“更多”可进入完整菜单，包括设置和退出。
+不需要先填密钥或复制 AI 配置。基础桌宠、休息和本机工作状态显示不需要模型调用。普通源码启动默认进入半高工作台实时视图。
 
-第一次运行可按这条路线体验：**右键 → 喂糖 → 聊天输入“冥想” → 更多 → 小本事 → 番茄钟**。想理解今日小结、电量提醒与新特效，参照[图解手册](INTERACTIONS.md)。
+要在后台运行，可使用同一虚拟环境的 `pythonw.exe pet.py`。排查启动错误时先用有输出的 `python.exe`。重复启动通常只会唤起已经运行的实例。
 
-### 更新已有源码版
+## 日常操作
 
-使用 Git 克隆且没有本地修改时，在仓库目录执行 `git pull --ff-only`，然后退出旧桌宠并重新运行。下载 ZIP 的用户应解压到新目录，先验证新版本能正常启动；运行数据的路径见[数据说明](ASSISTANT.md#数据保存在什么位置)。不要用空白示例覆盖已有 AI 配置，也不要把个人存档打进公开压缩包。
+| 入口 | 作用 |
+| --- | --- |
+| 点击角色 | 触摸互动；休息时唤醒 |
+| 拖动角色／工作台 | 改变桌面位置 |
+| 角色或场景区域滚轮 | 调整大小 |
+| 双击角色、右上角“聊聊” | 打开聊天窗 |
+| 中键 | 打开 AI 工作轨迹与额度信息 |
+| 右键 | 打开互动卡片，提供聊天、喂糖、休息／叫醒等入口 |
+| 卡片“场景与设置” | 进入完整菜单、设置和退出 |
 
-若自己修改过源码，先保存这些修改并检查差异，再合并更新；不要为更新直接删除原来的整个运行目录。
+休息仍坐在秋千上，不要求切换场景。无互动的打盹采用安静帧率档；交互和思考会恢复相应档位。实际耗时依赖电脑与缩放，不把离线演示帧率当作日常性能承诺。
 
-### 启用 AI（可选）
+设置菜单包含声音、回复朗读、AI 状态灯、任务提醒、大小、置顶和鼠标穿透。开启鼠标穿透后，角色区域不再接收普通鼠标操作；需要时从托盘菜单恢复。
+
+聊天、右键卡片和菜单与主界面使用相近的深色半透明材质。下层桌面会略微透出；没有实时模糊桌面背景。
+
+## 阅读工作台
+
+实时视图最多展示 Codex、Claude、ZCode 各一行。每行包括状态、已观察阶段和任务方向；下方是独立的额度区域。
+
+- 点 Agent 名字，查看该来源的任务。
+- 点任务行，查看该会话的阶段与子代理分工。
+- 展开列表同时容纳六行，滚轮或滚动条浏览更多记录。
+- 点“返回”回任务列表，点“收起”回实时视图。
+
+“委派子智能体 · 颜色与对比度”表示已经观察到这类分工；它没有宣告子代理完成。阶段点不是工具调用计数，也不是完成百分比。更详细的数据来源和限制见[AI 与数据](ASSISTANT.md)。
+
+## 配置自由聊天（可选）
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-ai.txt
 ```
 
-在右键菜单的 AI 设置中配置自己的 Gemini 密钥，并启用 AI。模型名称也可在本机 `assets/ai_config.json` 中调整。API 由使用者自行申请和承担费用；不要把实际配置提交到仓库。
+从右键卡片进入“场景与设置 → 设置 → 连接 AI 聊天…”，按提示设置自己的 Gemini 密钥。公开的 [AI 配置示例](../assets/ai_config.example.json) 默认关闭且不含密钥。没有连接时，仍可使用本地互动，不保证回答任意知识问题。
 
-## 常用操作
+模型服务费用和配额由使用者承担。实际配置只留在本机；已有配置不要被示例覆盖。当前角色聊天与 Codex／Claude 工作流显示是不同功能，接入工作流不等于聊天使用了对应服务。
 
-| 操作 | 反馈 |
-| --- | --- |
-| 左键点头 / 点身体 | 摸头 / 挠痒 |
-| 按住拖动 | 移动；快速松手可以甩出 |
-| 滚轮 | 顺毛 |
-| 双击 | 时间魔法 |
-| 中键 | 随机动作 |
-| 右键 | 聊天、喂糖、魔法、跳舞、玩球、睡觉/叫醒 |
-| 卡片中的“更多” | 完整菜单、设置、退出 |
+## 更新已有安装
 
-详细玩法见 [CONTENTS.md](../CONTENTS.md)。
-
-## 数据与隐私
-
-配置、提醒、聊天记录和长期记忆保存在本机，已加入 `.gitignore`。本仓库使用全新的公开提交历史，不包含开发者的个人存档、聊天记忆、API 密钥或旧 Git 历史。
-
-AI 开启后，对话及相关记忆会发送给配置的模型服务；请求分析剪贴板或屏幕时，相应内容也可能发送。找文件、打开/关闭应用等助手操作在使用者自己的电脑上执行。请了解这些行为后再启用相关功能。
-
-`--debug-state` 会把界面状态（可能含聊天文字）写入 `pet_state.json`，只应在需要排查问题时使用。
-
-## 开发与测试
+在没有本地修改的克隆目录中执行：
 
 ```powershell
-# 在临时副本运行，隔离个人数据并关闭真实 AI
-.\.venv\Scripts\python.exe tools\run_checks.py
-# 仅单元与模拟 UI 检查（供 CI 使用）
-.\.venv\Scripts\python.exe tools\run_checks.py --unit-only
-# 发布前检查 Git 跟踪文件是否包含运行数据、密钥或本机路径
-.\.venv\Scripts\python.exe tools\check_public_files.py
+git pull --ff-only
 ```
 
-完整检查会短暂创建测试桌宠，结束后关闭。不要直接在日常运行目录执行 `test_pet.py`；使用上面的隔离入口。
+先从桌宠菜单选择“退出”，等待旧实例结束，再用原来的 Python 重新启动。只更新磁盘文件不能替换旧进程内的代码。
 
-| 文件 | 职责 |
+自己改过源码时，先保存修改并检查差异，再合并更新。ZIP 安装可以解压到新目录验证；迁移个人配置、聊天和设置前先备份，不要把运行目录整包上传。数据位置见[本地文件](ASSISTANT.md#本地文件)。
+
+## 常见问题
+
+| 现象 | 先检查 |
 | --- | --- |
-| `pet.py` | 窗口、交互、状态机、聊天 UI、音效 |
-| `depth_model.py` | 连续深度网格、部位跟随、光照与阴影缓存 |
-| `fx.py` | 法阵、粒子和特效缓存 |
-| `ai_chat.py` | 可选 AI、记忆、回复解析 |
-| `agent.py` | 本机助手意图与执行 |
-| `zcode_notify.py` | 可选 ZCode 完成/待确认通知 |
-| `build_release.py` | Windows 打包与发布副本净化 |
+| 改完代码界面没变 | 旧实例是否从菜单退出；新进程是否使用刚更新的目录 |
+| 没有工作流记录 | 是否存在本地 Codex／Claude Code 日志，或已配置 ZCode／跨机 hook；安装桌宠不会自动创建这些来源 |
+| Claude 云端任务不显示 | 云端会话没有本地日志；不要用本地 Claude 或模拟数据代替 |
+| 额度显示“暂无数据”或“旧” | AIQuota 或来源快照是否存在、格式有效且更新时间足够新 |
+| 聊天没收到模型回复 | AI 依赖、服务配置、网络和服务配额；不要把密钥贴到 Issue |
+| 只有文字没有声音 | 总声音开关、回复朗读开关和 Windows 音量 |
+| 鼠标点不到桌宠 | 检查鼠标穿透，尝试托盘入口恢复 |
 
-开发决策见 [EXPERIMENTS.md](../EXPERIMENTS.md)，参与贡献见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+只有需要排查时才使用 `pet.py --debug-state`；它会写出可能含聊天文字的本地状态文件。不要将该文件原样公开。
 
-模块地图、分组测试和演示复现命令已集中在[开发指南](DEVELOPMENT.md)。`EXPERIMENTS.md` 是此前公开的历史记录；本轮变化以[更新记录](../CHANGELOG.md)为准。
+## 打包与许可
 
-## 打包 Windows 程序
+开发者可以安装 `requirements-build.txt`，运行 `py tools/release/build_release.py` 生成 Windows 发布包。本次仓库整理不代表该可执行包已重新验收；发布前需检查启动、素材、外部 hook 依赖和包内私人文件。
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\.venv\Scripts\python.exe build_release.py
-```
-
-输出 `release/DesktopPet-Windows-x64.zip`。打包脚本会清除发布包里的密钥和记忆；对外发布前仍应检查压缩包内容，不要直接上传自己的日常运行目录。仓库首次公开包含源码与素材，尚未提供经过本轮验证的预编译安装包。
-
-## 许可证与素材
-
-项目源码采用 [MIT License](../LICENSE)。角色图片、贴纸、音乐和语音**不自动适用 MIT**，详见 [ASSET_LICENSES.md](../ASSET_LICENSES.md)。维护者已确认这些素材可随本仓库公开分发；该说明不额外授予商用、修改或再次分发素材的权利。
-
-这是个人桌宠项目，不代表相关角色或素材权利方的官方产品。
+源码采用 [MIT](../LICENSE)，角色、美术、音乐与语音另有[素材授权限制](../ASSET_LICENSES.md)。`house3d/` 保留为独立 Godot 实验，不影响基本启动。

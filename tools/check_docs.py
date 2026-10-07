@@ -20,7 +20,7 @@ def anchors(text):
 
 
 def main():
-    files = sorted(ROOT.glob('*.md')) + sorted((ROOT/'docs').rglob('*.md')) + sorted((ROOT/'tools').glob('*.md'))
+    files = sorted(ROOT.glob('*.md')) + sorted((ROOT/'docs').rglob('*.md')) + sorted((ROOT/'tools').rglob('*.md')) + sorted((ROOT/'tests').glob('*.md'))
     failures, checked = [], 0
     for file in files:
         text = file.read_text(encoding='utf-8-sig')
