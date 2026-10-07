@@ -1476,3 +1476,18 @@ ACCEPT。回归 test_pet 177/177 + 五套 + test_core_profile 全绿。P3 遗留
 6. 实施：测试集中tests；制作/诊断/发布/历史工具分类；设计记录移docs/design；旧交接移docs/archive，去掉61处副本；README与当前指引重写。发布hook补task_directions，包内说明改当前核心档。
 7. 固定条件验证：Windows合成账户与临时副本，模型/网络禁用。481单元、0skip；test_pet186/186。保留旧compat591项1失败2skip与test_agent9/9结果。core_runtime先断言flat默认，再显式旧小屋fixture，原数据隔离断言保留。当前实时/展开预览均模拟、quota未知；37生产模块与基线一致。合成装配验证hook导入和净化通过；无exe/动态视觉新验收声明。
 8. 独立审核：代理只读确认路径、导入、未丢测试、生产完整性与README能力相符，无必修项。结论ACCEPT；main与原交接分支同步此整理提交。实际测试/兼容日志保存在本轮本机work，个人数据不入库。
+
+## I-40 · 秋千坐姿动作 套一+套二（2026-10-07，Claude 云端）
+
+1. 观察：秋千是默认舞台，但反应规则的 notice 等动作只在站立 idle/sticker 生效，坐着时静默丢弃；点帽子冲量
+   在 150% 下帽尖不足 1px；秋千上所有点击都是摸头并推秋千，没有推坐垫与长按。
+2. 单一问题：用秋千原画真实看得见的通道，给 AI 状态与直接触碰各一组短动作，不加素材、不加常亮效果。
+3. 假设：组合秋千、视线、帽尖旋转、眼睑/嘴（hat_dx/发梢不足 1px 不用），可在宪法幅度内读得出动作。
+4. 实验：用生产 life.Pendulum/LifeMotion、_art_pose 量化与 SceneArt.pose_keystone 离线渲染三套动作 GIF（150% 实际
+   尺寸，无眼睑/特效），用户确认后实施套一套二；标定帽尖冲量 0.3～0.6 才越过死区，峰值约 2～5px。
+5. 实现：新增 seat_motion.py；pet.py 接 _art_pose / _seat_swing_step / on_press 长按 / on_release 分流；agent_companion
+   按 kind 映射；agent_reactions 新增无声 error_seen（遵守 _muted 与 120 秒间隔，出错台词仍等触碰）。
+6. 证据：tests/test_seat_motion.py；预览 GIF 只在会话里交付，标注为离线网格渲染而非桌面截图。
+7. 回归：Linux（python3.12 + Xvfb + 只读测试用 Win32 垫片）当前单元 502 项、旧兼容 613 项、test_pet 182/184，失败名单与
+   改前完全相同；22/22 变异被抓到。坐垫判定线定在原画 y=880（膝上的手和裙摆仍算摸头）。没有运行 Windows 原生检查，也没有测 frame_ms 或重启主实例。
+8. 结论：INCONCLUSIVE（逻辑与接线已就绪；缺 Windows 1.0/0.76 真实尺寸肉眼复核、帧耗增量≤2ms 实测与规定回归）。

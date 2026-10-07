@@ -18,6 +18,7 @@ WAIT_DWELL, ERROR_DWELL = 20.0, 10.0        # seconds a state must hold before s
 DONE_MIN_RUN, LONG_RUN = 90.0, 1200.0       # shorter runs finish unremarked; one stretch per session after 20 min
 REMIND_WAIT = 600.0                         # one more nudge this long after the first, then never again
 STARTED_GAP, GLOBAL_GAP, DAILY_CAP = 600.0, 120.0, 10   # between "started" glances / between spoken lines / spoken lines per day
+ERROR_SEEN_GAP = 120.0                      # between silent "error_seen" startles (the spoken line still waits for a touch)
 NOTE_TTL, COALESCE = 1800.0, 20.0           # a held note expires; finishes closer than this merge into one line
 HEAD_CHANCE, HEAD_GAP, APPROACH_GAP = 0.25, 120.0, 60.0
 QUOTA_HI, QUOTA_REARM = 90.0, 70.0          # warn once when crossing 90 %, re-arm after it falls below 70 %
@@ -82,7 +83,7 @@ class Reactor:
         self.day_of = day_of or (lambda t: time.strftime('%Y-%m-%d', time.localtime(t)))
         self.sess, self.notes, self.armed = {}, {}, {}
         self.ready = False
-        self.last_say = self.last_started = -1e9
+        self.last_say = self.last_started = self.last_error_seen = -1e9
         self.last_pull = {'head': -1e9, 'approach': -1e9}
         self.day, self.spoken = None, 0
 
@@ -158,6 +159,12 @@ class Reactor:
         elif st == 'waiting':
             if not self._muted('waiting_notice', ctx):
                 out.append(Reaction('waiting_notice', rec.agent, motion='notice'))
+        elif st == 'error':
+            # Silent and wordless: on the swing the host plays a short startle. The spoken line keeps
+            # waiting for a touch (see _dwell), so an error still never interrupts with a bubble or sound.
+            if now - self.last_error_seen >= ERROR_SEEN_GAP and not self._muted('error', ctx):
+                self.last_error_seen = now
+                out.append(Reaction('error_seen', rec.agent))
         elif st == 'done':
             if prev in LIVE and rec.run_since is not None and now - rec.run_since >= DONE_MIN_RUN \
                     and not self._muted('done', ctx):

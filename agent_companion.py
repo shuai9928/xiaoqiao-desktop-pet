@@ -57,9 +57,20 @@ def context(owner, *, now=None):
                 watching_agent=watching, cursor_near=near)
 
 
+# On the swing the standing micro-motions never run (they need state idle/sticker), so these reaction
+# kinds become seated actions instead (seat_motion, I-40). Off the swing the old primitives stay.
+SEAT_ACTIONS = {'started': 'glance', 'waiting_notice': 'nudge', 'waiting': 'nudge',
+                'waiting_again': 'nudge', 'error_seen': 'startle', 'done': 'relief'}
+
+
 def execute(owner, reaction, now):
     if reaction is None:
         return False
+    seated = SEAT_ACTIONS.get(reaction.kind)
+    seated = bool(seated) and bool(getattr(owner, '_seat_allowed', lambda: False)())
+    if seated:
+        # A higher-priority action already playing (her own pat/push) simply keeps going.
+        owner.start_seat_action(SEAT_ACTIONS[reaction.kind])
     if reaction.say:
         owner.say(reaction.say)
     if reaction.emotion:
@@ -70,10 +81,10 @@ def execute(owner, reaction, now):
             owner.play_emotion('comfort')
         elif not shown and reaction.fallback and reaction.emotion != 'care':
             owner.play_emotion(reaction.fallback)
-    if reaction.motion:
+    if reaction.motion and not seated:
         owner._start_micro_motion(reaction.motion)
         owner._moon_look_until = now + 2.0
-    if 'hop' in reaction.effects:
+    if 'hop' in reaction.effects and not seated:
         if getattr(owner, '_swing', None):
             owner._swing_impulse(.04)
         else:

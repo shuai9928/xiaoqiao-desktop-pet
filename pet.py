@@ -30,6 +30,7 @@ import scene_art
 import ui3d
 import fx
 import life
+import seat_motion
 from fx import transform_ribbons
 from depth_model import DepthWarp, DepthMotion
 
@@ -6741,6 +6742,12 @@ class Pet:
                 lx = min(1.0, lx+.375)
             elif current.get('state') == 'running' and not current.get('stale') and not ai_session_stale(current, now):
                 lx = min(1.0, lx+.125)
+        seat = self.__dict__.get("_seat_motion")
+        if seat is not None:
+            # 坐姿动作(I-40):视线按时间轴缓入缓出地盖过头部跟随,同样量化进缓存键
+            gx, gy = seat.gaze(time.time(), (lx, ly))
+            lx = round(max(-1.0, min(1.0, gx)) * 8) / 8
+            ly = round(max(-1.0, min(1.0, gy)) * 8) / 8
         lf = getattr(self, "life", None)
 
         def dz(v, dead, step):
@@ -6757,6 +6764,8 @@ class Pet:
         br = round(math.sin(math.atan2(-om / w0, sw.get("theta", phase))) * 4) / 4
         if self.state == "sleep" or getattr(self, "_nap_on_swing", False):
             br *= 1.4                       # 睡着时呼吸更深
+        if seat is not None:
+            br = round(max(-1.4, min(1.4, seat.breath(time.time(), br))) * 4) / 4
         q = (lx, ly, rot, hdx, hair, br)
         return {"look": (lx, ly), "hat": (rot, hdx), "hair": hair, "breath": br,
                 "theta": phase, "q": q}
@@ -6785,6 +6794,108 @@ class Pet:
         ax = (ex + geo["O"][0]) / geo["k"]
         ay = (ey + geo["O"][1]) / geo["k"]
         return sa._rig_w("hat", ax, ay) > 0.5 and sa._rig_w("face", ax, ay) < 0.3
+
+    def _art_seat_hit(self, ex, ey):
+        """场景画布上的点是不是落在坐垫/腿脚上(原画 y≥SEAT_ZONE_Y,人物包围盒内)。"""
+        sw, sa = getattr(self, "_swing", None), self._scene_art
+        if not sw or not sw.get("art") or sa is None:
+            return False
+        geo = sw["geo"]
+        ax = (ex + geo["O"][0]) / geo["k"]
+        ay = (ey + geo["O"][1]) / geo["k"]
+        gx0, gy0, gx1, gy1 = sa.girl_bbox
+        return gx0 <= ax <= gx1 and seat_motion.SEAT_ZONE_Y <= ay <= gy1
+
+    # ---- 秋千坐姿动作(I-40):套一陪你干活 + 套二摸摸她,时间轴在 seat_motion ----
+    def _seat(self):
+        seat = self.__dict__.get("_seat_motion")
+        if seat is None:
+            seat = self._seat_motion = seat_motion.SeatMotion()
+        return seat
+
+    def _seat_allowed(self):
+        """只在秋千上、且没有减少动画/打盹/唱歌/拖动时播。"""
+        return (self.state == "swing" and bool(self._swing)
+                and not getattr(self, "ui_reduced_anim", False)
+                and not getattr(self, "_nap_on_swing", False)
+                and not getattr(self, "singing", False)
+                and not (self.drag and self.drag[4])
+                and not (getattr(self, "_scene_drag", None) or {}).get("moved"))
+
+    def start_seat_action(self, name, side=1):
+        """播一个坐姿动作。不允许时返回 False(调用方走原来的反馈);
+        正在播更高优先级的动作时也返回 False。眼睑/情绪嘴走 _offer_lid,被占着就排队。"""
+        if not self._seat_allowed():
+            return False
+        now = time.time()
+        if not self._seat().start(name, now, side):
+            return False
+        spec = seat_motion.ACTIONS[name]
+        if spec.get("lid"):
+            lid, mode, hold = spec["lid"]
+            self._offer_lid(lid, mode, now, hold)
+        if spec.get("mouth"):
+            self._mouth = (spec["mouth"][0], now + spec["mouth"][1])
+        return True
+
+    def _seat_swing_step(self, sw, dt, now):
+        """秋千钟摆走一步:坐姿动作要她停住时临时加大阻尼、不泵;再把到点的帽尖/秋千冲量打出去。
+        打盹也会改阻尼,所以只在这一步里改,算完原样还回去。"""
+        seat = self.__dict__.get("_seat_motion")
+        hold = bool(seat and seat.holding(now))
+        pend = sw["pend"]
+        damping = pend.damping
+        if hold:
+            pend.damping = seat_motion.HOLD_DAMPING
+        try:
+            theta, omega = pend.step(dt, pump=(now - self.last_interact) < 45 and not hold)
+        finally:
+            pend.damping = damping
+        for channel, dv in (seat.due(now) if seat else ()):
+            if channel == "hat":
+                self.life.hat_rot.impulse(dv)
+            elif channel == "swing":
+                pend.impulse(dv)
+                theta, omega = pend.theta, pend.omega
+        return theta, omega
+
+    def _seat_hat_click(self):
+        """B2 弹帽尖:原来的帽子星星/台词照旧,帽尖用看得见的冲量,她抬头看。"""
+        self.wobble_hat()
+        if not self.start_seat_action("flick", random.choice((-1, 1))):
+            self._swing_impulse(0.05)
+
+    def _seat_head_click(self):
+        """B1 摸头蹭手心:秋千放慢、低头蹭两下(不能播时退回原来的摸头+推一下)。"""
+        self.pet_head()
+        if not self.start_seat_action("pat"):
+            self._swing_impulse(0.10)
+
+    def _seat_push(self):
+        """B3 推一把:秋千荡起来,她开心地看前面。不能播时和原来一样当摸头。"""
+        if self.start_seat_action("push"):
+            self._swing_impulse(seat_motion.PUSH_IMPULSE)
+        else:
+            self.pet_head()
+            self._swing_impulse(0.10)
+
+    def _seat_long_press(self, d, x):
+        """B4 长按害羞:按住没挪动才算;扭头躲开按下的那一侧。"""
+        if getattr(self, "_scene_drag", None) is not d or d.get("moved"):
+            return False
+        sw = self._swing or {}
+        geo, sa = sw.get("geo") or {}, self._scene_art
+        side = 1
+        if sa is not None and geo.get("k"):
+            face = sa.meta.get("face") or {}
+            eyes = (face.get("eye_l", (610, 520)), face.get("eye_r", (737, 554)))
+            fx = (eyes[0][0] + eyes[1][0]) / 2 * geo["k"] - geo["O"][0]
+            side = 1 if x >= fx else -1   # 点在脸右边 → 往左躲(shy 的视线是负向)
+        if not self.start_seat_action("shy", side):
+            return False
+        d["seat"] = "shy"
+        self.last_interact = time.time()
+        return True
 
     def _art_ground_shadow(self, canvas, sw, phase):
         geo, sa = sw["geo"], self._scene_art
@@ -7874,7 +7985,7 @@ class Pet:
             if bar_input(self, e, 'press'):
                 return
         self.last_interact = time.time()
-        self._wake_from_nap()               # 点她一下就醒,平滑回到摆动
+        woke = self._wake_from_nap()        # 点她一下就醒,平滑回到摆动
         if self._catch_collect(e.x, e.y):
             return          # 点到星星 = 接住,这一下不进入拖拽
         if self._pop_bubble(e.x, e.y):
@@ -7916,7 +8027,12 @@ class Pet:
                 if not self.house_enabled():
                     return                   # standalone scene closes its panel first
             # 其余 = 拖动整个场景(场景连同她一起移动)
-            self._scene_drag = {"mx": e.x_root, "my": e.y_root, "moved": False}
+            self._scene_drag = d = {"mx": e.x_root, "my": e.y_root, "moved": False}
+            root = getattr(self, "root", None)
+            if not woke and root is not None:
+                # 按住不动约 0.9 秒 = 长按(B4 害羞躲开);一挪动就仍是拖场景
+                root.after(seat_motion.LONG_PRESS_MS,
+                           lambda: self._seat_long_press(d, e.x))
             return
         self.drag = (e.x_root, e.y_root, self.x, self.fy, False, time.time())
 
@@ -8130,15 +8246,21 @@ class Pet:
             d = self._scene_drag
             self._scene_drag = None
             if not d["moved"] and self._swing:
+                if d.get("seat"):
+                    return                   # 长按已经回应过(害羞躲开),松手不再算一次摸头
                 self.click_token += 1
                 token = self.click_token
                 if self._art_hat_hit(e.x, e.y):
-                    # 点到帽子:帽子抖一下(弹簧 + 星星),秋千也轻轻晃
-                    self.root.after(60, lambda: token == self.click_token and (
-                        self.wobble_hat(), self._swing_impulse(0.05)))
+                    # 点到帽子:帽子抖一下(弹簧 + 星星),她抬头去看
+                    self.root.after(60, lambda: token == self.click_token
+                                    and self._seat_hat_click())
+                elif self._art_seat_hit(e.x, e.y):
+                    # 点坐垫/腿脚:推一把秋千
+                    self.root.after(60, lambda: token == self.click_token
+                                    and self._seat_push())
                 else:
-                    self.root.after(60, lambda: token == self.click_token and (
-                        self.pet_head(), self._swing_impulse(0.10)))
+                    self.root.after(60, lambda: token == self.click_token
+                                    and self._seat_head_click())
             else:
                 self._save_swing_scene()
             return
@@ -9452,8 +9574,7 @@ class Pet:
         # 20fps 档由状态保证;swing 不在重力兜底名单里,不会被拽进 fall。
         if st == "swing" and self._swing and not self.drag:
             sw = self._swing
-            theta, omega = sw["pend"].step(
-                dt, pump=(now - self.last_interact) < 45)
+            theta, omega = self._seat_swing_step(sw, dt, now)
             sw["theta"], sw["omega"] = theta, omega
             persp = 1.0 + SWING_PERSP * math.sin(theta)
             sw["persp"] = persp

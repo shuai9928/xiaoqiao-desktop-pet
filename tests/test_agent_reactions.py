@@ -152,10 +152,39 @@ class ErrorAndDoneTests(unittest.TestCase):
         self.assertEqual([r.kind for r in g.up(S('a', 'done'), t=1105)], ['done'])         # 105 s since the original start
 
 
+class ErrorSeenTests(unittest.TestCase):
+    """I-40: entering error gives one wordless 'error_seen' (a startle on the swing); the spoken line still waits."""
+    def test_silent_once_per_episode_and_rate_limited(self):
+        g = Rig('few');g.up(S('a', 'running'), S('b', 'running'), t=1000)
+        self.assertEqual([r.kind for r in g.up(S('a', 'error'), S('b', 'running'), t=1001)], ['error_seen'])
+        self.assertEqual(g.up(S('a', 'error'), S('b', 'running'), t=1005), [])              # same episode: nothing more
+        self.assertEqual(g.up(S('a', 'error'), S('b', 'error'), t=1010), [])                # another error inside the gap
+        g.up(S('a', 'running'), S('b', 'running'), t=1020)
+        out = g.up(S('a', 'error'), S('b', 'running'), t=1001 + ar.ERROR_SEEN_GAP + 1)
+        self.assertEqual([r.kind for r in out], ['error_seen'])
+
+    def test_quiet_states_off_level_and_baseline_stay_still(self):
+        for ctx in ({'focus': True}, {'sleeping': True}, {'dragging': True}, {'singing': True}, {'watching_agent': True}):
+            with self.subTest(ctx=ctx):
+                g = Rig('few');g.up(S('a', 'running'), t=1000)
+                self.assertEqual(g.up(S('a', 'error'), t=1001, **ctx), [])
+        g = Rig('off');g.up(S('a', 'running'), t=1000)
+        self.assertEqual(g.up(S('a', 'error'), t=1001), [])
+        g = Rig('few')
+        self.assertEqual(g.up(S('a', 'error'), t=1000), [])                                  # first sample = baseline, no storm
+
+    def test_the_spoken_error_line_still_waits_for_a_touch(self):
+        g = Rig('few');g.up(S('a', 'running'), t=1000);g.up(S('a', 'error'), t=1001)
+        self.assertEqual(g.up(S('a', 'error'), t=1001 + ar.ERROR_DWELL + 1), [])
+        self.assertEqual(g.pull('approach', S('a', 'error'), t=1100).kind, 'error')
+
+
 class LevelTests(unittest.TestCase):
     def test_few_only_covers_waiting_and_error(self):
         g = Rig('few');g.up(S('a', 'running'), S('e', 'running', 'Codex'), t=1000)
-        self.assertEqual(g.up(S('a', 'done'), S('e', 'error', 'Codex'), t=1100), [])
+        out = g.up(S('a', 'done'), S('e', 'error', 'Codex'), t=1100)                       # no 'done' at few; the error
+        self.assertEqual([(r.kind, r.agent, r.say, r.emotion, r.effects, r.sfx) for r in out],  # only gets the wordless startle
+                         [('error_seen', 'Codex', '', '', (), '')])
         g.up(S('a', 'done'), S('e', 'error', 'Codex'), t=1115)
         self.assertEqual(g.pull('approach', t=1200).kind, 'error')
         self.assertIsNone(g.pull('approach', t=1400))                                      # no 'done' note was ever kept
